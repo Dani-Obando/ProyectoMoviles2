@@ -9,23 +9,22 @@ export default function GameScreen() {
     const [mensajes, setMensajes] = useState([]);
     const [miTurno, setMiTurno] = useState(false);
     const [jugadorEnTurno, setJugadorEnTurno] = useState("");
+    const [pesoIzq, setPesoIzq] = useState(0);
+    const [pesoDer, setPesoDer] = useState(0);
+    const [eliminado, setEliminado] = useState(false);
+    const [resumenFinal, setResumenFinal] = useState(null);
 
     useEffect(() => {
-        if (!socket) {
-            Alert.alert("Error", "WebSocket no disponible");
-            return;
-        }
-
-        const mensajeEntrada = {
+        const mensaje = {
             type: "ENTRADA",
-            jugador: nombre
+            jugador: nombre,
         };
 
         if (socket.readyState === 1) {
-            socket.send(JSON.stringify(mensajeEntrada));
+            socket.send(JSON.stringify(mensaje));
         } else {
             socket.onopen = () => {
-                socket.send(JSON.stringify(mensajeEntrada));
+                socket.send(JSON.stringify(mensaje));
             };
         }
 
@@ -38,18 +37,19 @@ export default function GameScreen() {
                     setJugadorEnTurno(data.jugadorEnTurno);
                 } else if (data.type === "MENSAJE") {
                     setMensajes((prev) => [...prev, data.contenido]);
+                } else if (data.type === "ACTUALIZAR_BALANZA") {
+                    setPesoIzq(data.izquierdo);
+                    setPesoDer(data.derecho);
+                } else if (data.type === "ELIMINADO") {
+                    Alert.alert("⚠️ Has sido eliminado", data.mensaje);
+                    setEliminado(true);
+                    setMiTurno(false);
+                } else if (data.type === "RESUMEN") {
+                    setResumenFinal(data.contenido);
                 }
             } catch (err) {
                 console.error("❌ Error procesando mensaje:", err);
             }
-        };
-
-        socket.onerror = (e) => {
-            console.error("❌ WebSocket error:", e.message);
-        };
-
-        socket.onclose = () => {
-            console.warn("🔌 Conexión WebSocket cerrada");
         };
 
         return () => {
@@ -58,21 +58,53 @@ export default function GameScreen() {
     }, []);
 
     const enviarJugada = () => {
-        if (!socket || socket.readyState !== 1) {
-            Alert.alert("WebSocket no disponible");
-            return;
-        }
+        if (eliminado || resumenFinal) return;
 
         const peso = generarPesoAleatorio();
 
         const mensaje = {
             type: "JUGADA",
             jugador: nombre,
-            peso: peso
+            peso: peso,
         };
 
         socket.send(JSON.stringify(mensaje));
     };
+
+    const inclinacion = pesoIzq === pesoDer ? 0 : pesoIzq > pesoDer ? -10 : 10;
+
+    if (resumenFinal) {
+        return (
+            <ScrollView style={{ padding: 20 }}>
+                <Text style={{ fontSize: 22, fontWeight: "bold", marginBottom: 20 }}>
+                    🏁 Juego finalizado
+                </Text>
+
+                <Text style={{ fontSize: 16, marginBottom: 10 }}>
+                    ⚖️ Peso total izquierdo: {resumenFinal.totales.izquierdo}g
+                </Text>
+                <Text style={{ fontSize: 16, marginBottom: 10 }}>
+                    ⚖️ Peso total derecho: {resumenFinal.totales.derecho}g
+                </Text>
+                <Text style={{ fontSize: 16, marginBottom: 10 }}>
+                    🏆 Lado ganador: {resumenFinal.ganador}
+                </Text>
+                <Text style={{ fontSize: 16, marginBottom: 10 }}>
+                    👤 Sobrevivientes: {resumenFinal.sobrevivientes.join(", ") || "Ninguno"}
+                </Text>
+
+                <Text style={{ fontSize: 16, marginTop: 20, fontWeight: "bold" }}>
+                    📋 Jugadas por turno:
+                </Text>
+                {resumenFinal.contenido.map((j, i) => (
+                    <Text key={i} style={{ marginBottom: 5 }}>
+                        Turno {j.turno}: {j.jugador} colocó {j.peso}g
+                    </Text>
+                ))}
+            </ScrollView>
+        );
+    }
+
 
     return (
         <View style={{ flex: 1, padding: 20 }}>
@@ -82,22 +114,40 @@ export default function GameScreen() {
             </Text>
 
             <Button
-                title={miTurno ? "ENVIAR PESO ALEATORIO" : "ESPERANDO TURNO..."}
+                title={eliminado ? "ELIMINADO" : miTurno ? "ENVIAR PESO ALEATORIO" : "ESPERANDO TURNO..."}
                 onPress={enviarJugada}
-                disabled={!miTurno}
+                disabled={!miTurno || eliminado}
             />
 
-            <Text style={{ marginTop: 20, fontWeight: "bold" }}>Mensajes:</Text>
-            <ScrollView style={{ marginTop: 10, maxHeight: 400 }}>
-                {mensajes.length > 0 ? (
-                    mensajes.map((msg, idx) => (
-                        <Text key={idx} style={{ marginBottom: 5 }}>{msg}</Text>
-                    ))
-                ) : (
-                    <Text style={{ fontStyle: "italic", color: "#888" }}>
-                        Aún no hay mensajes...
-                    </Text>
-                )}
+            <View style={{ marginTop: 40, alignItems: "center" }}>
+                <Text style={{ marginBottom: 10 }}>Balanza</Text>
+                <View
+                    style={{
+                        width: 200,
+                        height: 20,
+                        backgroundColor: "#444",
+                        transform: [{ rotate: `${inclinacion}deg` }],
+                        borderRadius: 10,
+                    }}
+                />
+                <View
+                    style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        width: 200,
+                        marginTop: 10,
+                    }}
+                >
+                    <Text>Izq: {pesoIzq}g</Text>
+                    <Text>Der: {pesoDer}g</Text>
+                </View>
+            </View>
+
+            <Text style={{ marginTop: 30, fontWeight: "bold" }}>Mensajes:</Text>
+            <ScrollView style={{ marginTop: 10, maxHeight: 300 }}>
+                {mensajes.map((msg, idx) => (
+                    <Text key={idx} style={{ marginBottom: 5 }}>{msg}</Text>
+                ))}
             </ScrollView>
         </View>
     );
