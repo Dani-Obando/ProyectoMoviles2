@@ -147,6 +147,8 @@ wss.on("connection", (ws) => {
                 } else {
                     clearTimeout(turnoTimeout);
                     const jugadorActual = jugadores[turnoActual];
+                    if (!jugadorActual) return;
+
                     const jugada = new Jugada({
                         jugador: msg.jugador,
                         turno: totalJugadas + 1,
@@ -195,9 +197,13 @@ wss.on("connection", (ws) => {
 });
 
 function avanzarTurno() {
+    if (jugadores.length === 0) return;
+
+    let intentos = 0;
     do {
         turnoActual = (turnoActual + 1) % jugadores.length;
-    } while (jugadores[turnoActual]?.eliminado && jugadores.length > 1);
+        intentos++;
+    } while (jugadores[turnoActual]?.eliminado && intentos < jugadores.length);
 
     enviarTurno();
 }
@@ -205,8 +211,15 @@ function avanzarTurno() {
 function enviarTurno() {
     clearTimeout(turnoTimeout);
 
+    if (!jugadores.length || turnoActual >= jugadores.length) {
+        console.warn("⚠️ No hay jugadores activos para el turno.");
+        return;
+    }
+
     const jugadorActual = jugadores[turnoActual];
-    const nombreActual = jugadorActual?.nombre || `Jugador ${turnoActual + 1}`;
+    if (!jugadorActual) return;
+
+    const nombreActual = jugadorActual.nombre || `Jugador ${turnoActual + 1}`;
 
     jugadores.forEach((j, i) => {
         if (j.readyState === WebSocket.OPEN) {
@@ -223,15 +236,27 @@ function enviarTurno() {
     });
 
     turnoTimeout = setTimeout(() => {
-        if (!jugadores[turnoActual]?.eliminado) {
-            jugadores[turnoActual].eliminado = true;
-            jugadores[turnoActual].send(JSON.stringify({
-                type: "ELIMINADO",
-                mensaje: "Has sido eliminado por inactividad (60s sin mover bloque).",
-            }));
+        const jugadorTimeout = jugadores[turnoActual];
+        if (!jugadorTimeout) {
+            console.warn("⚠️ Jugador ya no existe en turnoActual:", turnoActual);
+            avanzarTurno();
+            return;
+        }
+
+        if (!jugadorTimeout.eliminado) {
+            jugadorTimeout.eliminado = true;
+            try {
+                jugadorTimeout.send(JSON.stringify({
+                    type: "ELIMINADO",
+                    mensaje: "Has sido eliminado por inactividad (60s sin mover bloque).",
+                }));
+            } catch (err) {
+                console.error("❌ Error al notificar eliminación:", err.message);
+            }
+
             broadcast({
                 type: "MENSAJE",
-                contenido: `${jugadores[turnoActual].nombre} fue eliminado por inactividad.`,
+                contenido: `${jugadorTimeout.nombre} fue eliminado por inactividad.`,
             });
         }
 
