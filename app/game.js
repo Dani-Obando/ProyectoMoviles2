@@ -21,6 +21,8 @@ export default function GameScreen() {
     const [bloques, setBloques] = useState([]);
     const [pesoIzq, setPesoIzq] = useState(0);
     const [pesoDer, setPesoDer] = useState(0);
+    const [bloquesIzq, setBloquesIzq] = useState([]);
+    const [bloquesDer, setBloquesDer] = useState([]);
     const [miTurno, setMiTurno] = useState(false);
     const [jugadorEnTurno, setJugadorEnTurno] = useState("");
     const [eliminado, setEliminado] = useState(false);
@@ -115,18 +117,21 @@ export default function GameScreen() {
     }, []);
 
     const enviarJugada = (bloque, lado) => {
-        socket.send(
-            JSON.stringify({
-                type: "JUGADA",
-                jugador: nombre,
-                peso: bloque.peso,
-                color: bloque.color,
-                lado,
-            })
-        );
+        socket.send(JSON.stringify({
+            type: "JUGADA",
+            jugador: nombre,
+            peso: bloque.peso,
+            color: bloque.color,
+            lado,
+        }));
+
         setBloques((prev) =>
             prev.map((b) => (b.id === bloque.id ? { ...b, usado: true } : b))
         );
+
+        if (lado === "izquierdo") setBloquesIzq((prev) => [...prev, bloque]);
+        if (lado === "derecho") setBloquesDer((prev) => [...prev, bloque]);
+
         setMiTurno(false);
     };
 
@@ -145,13 +150,9 @@ export default function GameScreen() {
         if (bloque.usado) return null;
 
         const panResponder = PanResponder.create({
-            onStartShouldSetPanResponder: () =>
-                miTurno &&
-                !eliminado &&
-                dropAreas.izquierdo !== null &&
-                dropAreas.derecho !== null,
+            onStartShouldSetPanResponder: () => miTurno && !eliminado,
             onPanResponderGrant: () => {
-                bloque.pan.extractOffset();
+                bloque.pan.extractOffset(); // <-- ✅ para que se mueva libremente sin offset raro
             },
             onPanResponderMove: Animated.event(
                 [null, { dx: bloque.pan.x, dy: bloque.pan.y }],
@@ -213,46 +214,13 @@ export default function GameScreen() {
                 {miTurno ? `⏱️ Tiempo: ${contador}s` : "⏳ Esperando turno..."}
             </Text>
 
-            <BalanzaAnimada pesoIzq={pesoIzq} pesoDer={pesoDer} />
-
-            <View
-                style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    width: 200,
-                    marginTop: 10,
-                    alignSelf: "center",
-                }}
-            >
-                <View
-                    ref={refIzq}
-                    style={{ backgroundColor: "#ffe0e0", padding: 10, borderRadius: 5 }}
-                    onLayout={() => {
-                        refIzq.current?.measureInWindow((x, y, width, height) => {
-                            setDropAreas((prev) => ({
-                                ...prev,
-                                izquierdo: { x, y, width, height },
-                            }));
-                        });
-                    }}
-                >
-                    <Text>Izq: {pesoIzq}g</Text>
-                </View>
-                <View
-                    ref={refDer}
-                    style={{ backgroundColor: "#e0e0ff", padding: 10, borderRadius: 5 }}
-                    onLayout={() => {
-                        refDer.current?.measureInWindow((x, y, width, height) => {
-                            setDropAreas((prev) => ({
-                                ...prev,
-                                derecho: { x, y, width, height },
-                            }));
-                        });
-                    }}
-                >
-                    <Text>Der: {pesoDer}g</Text>
-                </View>
-            </View>
+            <BalanzaAnimada
+                pesoIzq={pesoIzq}
+                pesoDer={pesoDer}
+                bloquesIzq={bloquesIzq}
+                bloquesDer={bloquesDer}
+                setDropAreas={setDropAreas}
+            />
 
             <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 30 }}>
                 {bloques.map(renderBloque)}
