@@ -15,13 +15,18 @@ export default function HomeScreen() {
     };
 
     return (
-        <View style={{ padding: 20, flex: 1, justifyContent: 'center' }}>
-            <Text style={{ fontSize: 18 }}>Ingresa tu nombre:</Text>
+        <View style={{ flex: 1, justifyContent: "center", padding: 20 }}>
+            <Text style={{ fontSize: 20 }}>Bienvenido a Juego de la Balanza</Text>
             <TextInput
-                placeholder="Jugador..."
+                placeholder="Nombre del jugador"
                 value={nombre}
                 onChangeText={setNombre}
-                style={{ borderWidth: 1, padding: 10, marginVertical: 20 }}
+                style={{
+                    borderWidth: 1,
+                    borderColor: '#ccc',
+                    padding: 10,
+                    marginVertical: 20
+                }}
             />
             <Button title="Entrar al juego" onPress={entrarAlJuego} />
         </View>
