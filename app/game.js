@@ -21,6 +21,7 @@ export default function GameScreen() {
     const [jugadorEnTurno, setJugadorEnTurno] = useState("");
     const [pesoIzq, setPesoIzq] = useState(0);
     const [pesoDer, setPesoDer] = useState(0);
+    const [resumenFinal, setResumenFinal] = useState(null);
     const [eliminado, setEliminado] = useState(false);
     const [contador, setContador] = useState(60);
     const intervaloRef = useRef(null);
@@ -48,7 +49,7 @@ export default function GameScreen() {
         const mensaje = {
             type: "ENTRADA",
             jugador: nombre,
-            modo: modo,
+            modo,
         };
 
         if (socket.readyState === 1) {
@@ -64,7 +65,6 @@ export default function GameScreen() {
                 if (data.type === "TURNO") {
                     setMiTurno(data.tuTurno);
                     setJugadorEnTurno(data.jugadorEnTurno);
-
                     if (data.tuTurno && !eliminado) {
                         setContador(60);
                         clearInterval(intervaloRef.current);
@@ -100,8 +100,7 @@ export default function GameScreen() {
 
                 if (data.type === "RESUMEN") {
                     clearInterval(intervaloRef.current);
-                    setContador(0);
-                    // Aquí puedes mostrar un resumen bonito al final si lo necesitas
+                    setResumenFinal(data);
                 }
             } catch (err) {
                 console.error("❌ Error procesando mensaje:", err);
@@ -136,7 +135,11 @@ export default function GameScreen() {
         const panResponder = PanResponder.create({
             onStartShouldSetPanResponder: () => miTurno && !eliminado,
             onPanResponderGrant: () => {
-                bloque.pan.extractOffset(); // <-- ✅ para que se mueva libremente sin offset raro
+                bloque.pan.setOffset({
+                    x: bloque.pan.x._value,
+                    y: bloque.pan.y._value,
+                });
+                bloque.pan.setValue({ x: 0, y: 0 });
             },
             onPanResponderMove: Animated.event(
                 [null, { dx: bloque.pan.x, dy: bloque.pan.y }],
@@ -168,16 +171,12 @@ export default function GameScreen() {
                 style={[
                     styles.bloque,
                     { backgroundColor: bloque.color },
-                    {
-                        transform: [
-                            { translateX: bloque.pan.x },
-                            { translateY: bloque.pan.y },
-                        ],
-                    },
+                    { transform: bloque.pan.getTranslateTransform() },
                 ]}
             />
         );
     };
+
 
 
     const isInDropArea = (gesture, area) => {
@@ -190,6 +189,25 @@ export default function GameScreen() {
             moveY < area.y + area.height
         );
     };
+
+    const inclinacion = pesoIzq === pesoDer ? 0 : pesoIzq > pesoDer ? -10 : 10;
+
+    if (resumenFinal) {
+        return (
+            <ScrollView style={{ padding: 20 }}>
+                <Text style={styles.tituloResumen}>🏁 Juego finalizado</Text>
+                <Text>⚖️ Peso total izquierdo: {resumenFinal.totales.izquierdo}g</Text>
+                <Text>⚖️ Peso total derecho: {resumenFinal.totales.derecho}g</Text>
+                <Text>🏆 Lado ganador: {resumenFinal.ganador}</Text>
+                <Text>👤 Sobrevivientes: {resumenFinal.sobrevivientes.join(", ") || "Ninguno"}</Text>
+
+                <Text style={{ marginTop: 20, fontWeight: "bold" }}>📋 Jugadas por turno:</Text>
+                {resumenFinal.contenido.map((j, i) => (
+                    <Text key={i}>Turno {j.turno}: {j.jugador} colocó {j.peso}g</Text>
+                ))}
+            </ScrollView>
+        );
+    }
 
     return (
         <View style={{ flex: 1, padding: 20 }}>
@@ -206,7 +224,7 @@ export default function GameScreen() {
                         width: 200,
                         height: 20,
                         backgroundColor: "#444",
-                        transform: [{ rotate: `${pesoIzq > pesoDer ? -10 : pesoIzq < pesoDer ? 10 : 0}deg` }],
+                        transform: [{ rotate: `${inclinacion}deg` }],
                         borderRadius: 10,
                     }}
                 />
@@ -266,11 +284,12 @@ export default function GameScreen() {
 const styles = StyleSheet.create({
     titulo: { fontSize: 18, marginBottom: 10 },
     subtitulo: { fontSize: 16, fontWeight: "bold", marginBottom: 10 },
+    tituloResumen: { fontSize: 22, fontWeight: "bold", marginBottom: 20 },
     bloque: {
         width: 60,
         height: 60,
-        margin: 10,
         borderRadius: 8,
+        margin: 10,
         elevation: 4,
         shadowColor: "#000",
         shadowOpacity: 0.3,

@@ -19,8 +19,6 @@ app.use("/adivinanzas", adivinanzasRoute);
 
 conectarDB();
 
-const COLORES = ["red", "blue", "green", "orange", "purple"];
-
 let jugadores = [];
 let turnoActual = 0;
 let pesoIzquierdo = 0;
@@ -31,15 +29,12 @@ let bloquesTotales = 0;
 let bloquesPorJugador = {};
 let turnoTimeout = null;
 
+const COLORES = ["red", "blue", "green", "orange", "purple"];
+
 wss.on("connection", (ws) => {
     ws.id = Math.random().toString(36).substring(2);
     ws.eliminado = false;
-    ws.individual = false;
-    ws.bloquesUsados = 0;
-    ws.pesoIzquierdo = 0;
-    ws.pesoDerecho = 0;
     jugadores.push(ws);
-
     console.log(`🟢 Nuevo jugador conectado: ${ws.id}`);
 
     ws.on("message", async (data) => {
@@ -56,107 +51,46 @@ wss.on("connection", (ws) => {
                         for (let i = 0; i < 2; i++) {
                             const peso = Math.floor(Math.random() * 19) + 2;
                             bloques.push({ color, peso });
-                            if (!ws.individual) bloquesTotales++;
+                            bloquesTotales++;
                         }
                     });
                     bloquesPorJugador[msg.jugador] = bloques;
                 }
 
-                if (!ws.individual) {
+                if (ws.individual) {
+                    ws.send(JSON.stringify({
+                        type: "TURNO",
+                        tuTurno: true,
+                        jugadorEnTurno: ws.nombre,
+                    }));
+                } else {
                     broadcast({
                         type: "MENSAJE",
                         contenido: `${msg.jugador} se unió al juego.`,
                         totalJugadores: jugadores.filter(j => !j.individual).length,
                     });
                     enviarTurno();
-                } else {
-                    ws.send(JSON.stringify({
-                        type: "TURNO",
-                        tuTurno: true,
-                        jugadorEnTurno: msg.jugador,
-                    }));
                 }
             }
 
             if (msg.type === "JUGADA") {
-                // Individual
-                if (ws.individual) {
-                    const bloquesJugador = bloquesPorJugador[ws.nombre] || [];
-                    ws.bloquesUsados++;
-
-                    if (msg.lado === "izquierdo") {
-                        ws.pesoIzquierdo += msg.peso;
-                    } else {
-                        ws.pesoDerecho += msg.peso;
-                    }
-
-                    // Actualiza al mismo jugador
-                    ws.send(JSON.stringify({
-                        type: "ACTUALIZAR_BALANZA",
-                        izquierdo: ws.pesoIzquierdo,
-                        derecho: ws.pesoDerecho,
-                    }));
-
-                    if (ws.bloquesUsados >= bloquesJugador.length) {
-                        const resumen = {
-                            contenido: bloquesJugador.map((b, i) => ({
-                                turno: i + 1,
-                                jugador: ws.nombre,
-                                peso: b.peso,
-                                color: b.color,
-                            })),
-                            totales: {
-                                izquierdo: ws.pesoIzquierdo,
-                                derecho: ws.pesoDerecho,
-                            },
-                            sobrevivientes: [ws.nombre],
-                            ganador:
-                                ws.pesoIzquierdo === ws.pesoDerecho
-                                    ? "Empate"
-                                    : ws.pesoIzquierdo < ws.pesoDerecho
-                                        ? "Izquierdo"
-                                        : "Derecho",
-                            bloquesPorJugador: {
-                                [ws.nombre]: bloquesJugador,
-                            },
-                        };
-
-                        ws.send(JSON.stringify({
-                            type: "RESUMEN",
-                            ...resumen,
-                        }));
-                    } else {
-                        ws.send(JSON.stringify({
-                            type: "TURNO",
-                            tuTurno: true,
-                            jugadorEnTurno: ws.nombre,
-                        }));
-                    }
-
-                    return;
-                }
-
-                // Multijugador
                 clearTimeout(turnoTimeout);
-                const jugadorActual = jugadores[turnoActual];
 
                 const jugada = new Jugada({
                     jugador: msg.jugador,
                     turno: totalJugadas + 1,
                     peso: msg.peso,
-                    equipo: 0,
-                    eliminado: false,
                     color: msg.color,
+                    eliminado: false,
                 });
                 await jugada.save();
 
-                if (ladoActual === "izquierdo") {
+                if (msg.lado === "izquierdo") {
                     pesoIzquierdo += msg.peso;
-                    ladoActual = "derecho";
-                } else {
+                } else if (msg.lado === "derecho") {
                     pesoDerecho += msg.peso;
-                    ladoActual = "izquierdo";
                 }
+
 
                 broadcast({
                     type: "ACTUALIZAR_BALANZA",
@@ -192,33 +126,26 @@ wss.on("connection", (ws) => {
 });
 
 function avanzarTurno() {
-    const activos = jugadores.filter(j => !j.individual && !j.eliminado);
-    if (activos.length === 0) return;
-
     do {
-        turnoActual = (turnoActual + 1) % activos.length;
-    } while (activos[turnoActual]?.eliminado && activos.length > 1);
+        turnoActual = (turnoActual + 1) % jugadores.length;
+    } while (jugadores[turnoActual]?.eliminado && jugadores.length > 1);
 
     enviarTurno();
 }
 
 function enviarTurno() {
     clearTimeout(turnoTimeout);
-    const activos = jugadores.filter(j => !j.individual && !j.eliminado);
-    if (activos.length === 0) return;
 
-    const jugadorActual = activos[turnoActual];
+    const jugadorActual = jugadores[turnoActual];
     const nombreActual = jugadorActual?.nombre || `Jugador ${turnoActual + 1}`;
 
-    activos.forEach((j, i) => {
+    jugadores.forEach((j, i) => {
         if (j.readyState === WebSocket.OPEN) {
-            j.send(
-                JSON.stringify({
-                    type: "TURNO",
-                    tuTurno: j === jugadorActual,
-                    jugadorEnTurno: nombreActual,
-                })
-            );
+            j.send(JSON.stringify({
+                type: "TURNO",
+                tuTurno: i === turnoActual && !j.eliminado,
+                jugadorEnTurno: nombreActual,
+            }));
         }
     });
 
@@ -236,21 +163,18 @@ function enviarTurno() {
                 contenido: `${jugadores[turnoActual].nombre} fue eliminado por inactividad.`,
             });
         }
+
         avanzarTurno();
     }, 60000);
 }
 
 function broadcast(data) {
     const mensaje = typeof data === "string" ? data : JSON.stringify(data);
-    jugadores
-        .filter((j) => !j.individual && j.readyState === WebSocket.OPEN)
-        .forEach((j) => {
-            try {
-                j.send(mensaje);
-            } catch (err) {
-                console.error("❌ Error al enviar broadcast:", err.message);
-            }
-        });
+    jugadores.forEach((j) => {
+        if (j.readyState === WebSocket.OPEN) {
+            j.send(mensaje);
+        }
+    });
 }
 
 async function enviarResumenFinal() {
@@ -263,16 +187,13 @@ async function enviarResumenFinal() {
         color: j.color || null,
     }));
 
-    const sobrevivientes = jugadores
-        .filter((j) => !j.individual && !j.eliminado)
-        .map((j) => j.nombre || "Jugador");
+    const sobrevivientes = jugadores.filter(j => !j.eliminado).map(j => j.nombre);
 
-    const ladoGanador =
-        pesoIzquierdo === pesoDerecho
-            ? "Empate"
-            : pesoIzquierdo < pesoDerecho
-                ? "Izquierdo"
-                : "Derecho";
+    const ladoGanador = pesoIzquierdo === pesoDerecho
+        ? "Empate"
+        : pesoIzquierdo < pesoDerecho
+            ? "Izquierdo"
+            : "Derecho";
 
     broadcast({
         type: "RESUMEN",
