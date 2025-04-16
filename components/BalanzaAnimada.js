@@ -77,97 +77,149 @@ export default function BalanzaAnimada({ pesoIzq, pesoDer, bloquesIzq, bloquesDe
 
     return (
         <View style={styles.wrapper}>
-            <Text style={{ marginBottom: 10 }}>⚖️ Balanza</Text>
+            <Text style={styles.titulo}>⚖️ Balanza</Text>
 
-            <View style={{ height: 120, justifyContent: "flex-end" }}>
-                <View style={{ width: 10, height: 60, backgroundColor: "#555", alignSelf: "center" }} />
+            <View style={styles.soporte}>
+                <View style={styles.baseVertical} />
 
                 <Animated.View
-                    style={{
-                        width: 240,
-                        height: 10,
-                        backgroundColor: "#333",
-                        borderRadius: 5,
-                        transform: [
-                            {
-                                rotate: inclinacionAnimada.interpolate({
-                                    inputRange: [-50, 0, 50],
-                                    outputRange: ["10deg", "0deg", "-10deg"],
-                                }),
-                            },
-                        ],
-                        alignSelf: "center",
-                    }}
+                    style={[
+                        styles.barra,
+                        {
+                            transform: [
+                                {
+                                    rotate: inclinacionAnimada.interpolate({
+                                        inputRange: [-50, 0, 50],
+                                        outputRange: ["10deg", "0deg", "-10deg"],
+                                    }),
+                                },
+                            ],
+                        },
+                    ]}
                 >
+                    {/* CUERDAS */}
+                    <View style={styles.cuerdaIzq} />
+                    <View style={styles.cuerdaDer} />
+
+                    {/* PLATO IZQ */}
                     <View style={styles.platoIzq}>
-                        <Text style={{ marginBottom: 5 }}>{pesoIzq}g</Text>
-                        <View style={styles.barraIzq} />
+                        <Text style={styles.pesoTextoInclinado}>{pesoIzq}g</Text>
+                        <View ref={refIzq} style={styles.platoCaja}>
+                            {renderBloques(bloquesIzq, "izq")}
+                        </View>
                     </View>
+
+                    {/* PLATO DER */}
                     <View style={styles.platoDer}>
-                        <Text style={{ marginBottom: 5 }}>{pesoDer}g</Text>
-                        <View style={styles.barraDer} />
+                        <Text style={styles.pesoTextoInclinado}>{pesoDer}g</Text>
+                        <View ref={refDer} style={styles.platoCaja}>
+                            {renderBloques(bloquesDer, "der")}
+                        </View>
                     </View>
                 </Animated.View>
-            </View>
-
-            <View style={styles.contenedores}>
-                <View ref={refIzq} style={styles.caja}>
-                    {renderBloques(bloquesIzq, "izq")}
-                </View>
-                <View ref={refDer} style={styles.caja}>
-                    {renderBloques(bloquesDer, "der")}
-                </View>
             </View>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    wrapper: { alignItems: "center", marginTop: 30 },
-    platoIzq: {
-        position: "absolute",
-        left: 10,
-        bottom: -35,
+    wrapper: {
+        alignItems: "center",
+        marginTop: 30,
+    },
+    titulo: {
+        marginBottom: 10,
+        fontSize: 18,
+        fontWeight: "bold",
+        color: "#333",
+    },
+    soporte: {
+        height: 200,
+        justifyContent: "flex-start",
         alignItems: "center",
     },
-    barraIzq: {
-        width: 50,
-        height: 10,
-        backgroundColor: "#f99",
-        borderRadius: 5,
+    baseVertical: {
+        width: 8,
+        height: 70,
+        backgroundColor: "#666",
+        borderRadius: 4,
+    },
+    barra: {
+        width: 270,
+        height: 15,
+        backgroundColor: "#2c3e50",
+        borderRadius: 6,
+        marginTop: -6,
+        justifyContent: "center",
+        alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 2, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+    },
+    cuerdaIzq: {
+        position: "absolute",
+        left: 46,          // alineado con el centro del cuadro izquierdo
+        bottom: -14,       // lo ajustamos para que baje desde la barra hasta el cuadro
+        width: 2,
+        height: 15,
+        backgroundColor: "#2c3e50",
+        zIndex: 3,
+    },
+    cuerdaDer: {
+        position: "absolute",
+        right: 48,         // alineado con el centro del cuadro derecho
+        bottom: -14,
+        width: 2,
+        height: 15,
+        backgroundColor: "#2c3e50",
+        zIndex: 3,
+    },
+
+    platoIzq: {
+        position: "absolute",
+        left: 0,
+        bottom: -110,
+        alignItems: "center",
     },
     platoDer: {
         position: "absolute",
-        right: 10,
-        bottom: -35,
+        right: 0,
+        bottom: -110,
         alignItems: "center",
     },
-    barraDer: {
-        width: 50,
-        height: 10,
-        backgroundColor: "#99f",
-        borderRadius: 5,
-    },
-    contenedores: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        marginTop: 20,
-        paddingHorizontal: 40,
-        width: "100%",
-    },
-    caja: {
-        width: 120,
-        height: 120,
-        backgroundColor: "#eee",
+    platoCaja: {
+        width: 96,
+        height: 96,
+        backgroundColor: "#f5f5f5",
         borderRadius: 10,
-        padding: 5,
+        padding: 4,
         flexWrap: "wrap",
         flexDirection: "row",
+        justifyContent: "flex-start",
+        alignItems: "flex-start",
+        borderWidth: 1,
+        borderColor: "#ccc",
+        shadowColor: "ray",
+        shadowOpacity: 0.1,
+        shadowOffset: { width: 1, height: 1 },
+        shadowRadius: 3,
+    },
+    pesoTextoInclinado: {
+        position: "absolute",
+        bottom: 111,
+        fontSize: 12,
+        fontWeight: "bold",
+        color: "white",
+        paddingHorizontal: 5,
+        borderRadius: 5,
+        zIndex: 2,
     },
     miniBloque: {
-        width: 20,
-        height: 20,
+        width: 15,
+        height: 15,
         borderRadius: 4,
-        margin: 3,
+        margin: 1.5,
+        elevation: 1.5,
     },
 });
