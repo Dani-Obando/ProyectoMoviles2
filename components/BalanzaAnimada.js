@@ -1,10 +1,11 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, Animated, StyleSheet } from "react-native";
 
 export default function BalanzaAnimada({ pesoIzq, pesoDer, bloquesIzq, bloquesDer, setDropAreas }) {
     const inclinacionAnimada = useRef(new Animated.Value(0)).current;
     const refIzq = useRef(null);
     const refDer = useRef(null);
+    const [bloquesAnimados, setBloquesAnimados] = useState(new Set());
 
     useEffect(() => {
         const diff = pesoIzq - pesoDer;
@@ -30,8 +31,20 @@ export default function BalanzaAnimada({ pesoIzq, pesoDer, bloquesIzq, bloquesDe
         }
     }, [bloquesIzq.length, bloquesDer.length]);
 
-    const renderBloques = (bloques) =>
+    const renderBloques = (bloques, lado) =>
         bloques.map((bloque, i) => {
+            const key = `${lado}-${bloque.color}-${bloque.peso}-${i}`;
+            const yaAnimado = bloquesAnimados.has(key);
+
+            const styleBase = [
+                styles.miniBloque,
+                { backgroundColor: bloque.color },
+            ];
+
+            if (yaAnimado) {
+                return <View key={key} style={styleBase} />;
+            }
+
             const anim = new Animated.Value(0);
             Animated.spring(anim, {
                 toValue: 1,
@@ -39,13 +52,14 @@ export default function BalanzaAnimada({ pesoIzq, pesoDer, bloquesIzq, bloquesDe
                 useNativeDriver: true,
             }).start();
 
+            setBloquesAnimados((prev) => new Set(prev).add(key));
+
             return (
                 <Animated.View
-                    key={i}
+                    key={key}
                     style={[
-                        styles.miniBloque,
+                        ...styleBase,
                         {
-                            backgroundColor: bloque.color,
                             transform: [
                                 {
                                     translateY: anim.interpolate({
@@ -98,10 +112,10 @@ export default function BalanzaAnimada({ pesoIzq, pesoDer, bloquesIzq, bloquesDe
 
             <View style={styles.contenedores}>
                 <View ref={refIzq} style={styles.caja}>
-                    {renderBloques(bloquesIzq)}
+                    {renderBloques(bloquesIzq, "izq")}
                 </View>
                 <View ref={refDer} style={styles.caja}>
-                    {renderBloques(bloquesDer)}
+                    {renderBloques(bloquesDer, "der")}
                 </View>
             </View>
         </View>
