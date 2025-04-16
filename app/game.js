@@ -4,58 +4,52 @@ import {
     View,
     Text,
     ScrollView,
-    Alert,
     StyleSheet,
+    Alert,
     Animated,
     PanResponder,
 } from "react-native";
 import socket from "../sockets/connection";
-import { generarPesoAleatorio } from "../utils/helpers";
 
-const colores = ["red", "blue", "green", "orange", "purple"];
+const COLORES = ["red", "blue", "green", "orange", "purple"];
 
 export default function GameScreen() {
     const { nombre } = useLocalSearchParams();
+    const [bloques, setBloques] = useState([]);
     const [mensajes, setMensajes] = useState([]);
     const [miTurno, setMiTurno] = useState(false);
     const [jugadorEnTurno, setJugadorEnTurno] = useState("");
     const [pesoIzq, setPesoIzq] = useState(0);
     const [pesoDer, setPesoDer] = useState(0);
-    const [eliminado, setEliminado] = useState(false);
     const [resumenFinal, setResumenFinal] = useState(null);
-    const [bloques, setBloques] = useState([]);
+    const [eliminado, setEliminado] = useState(false);
     const [contador, setContador] = useState(60);
     const intervaloRef = useRef(null);
-
-    const [dropAreas, setDropAreas] = useState({
-        izquierdo: null,
-        derecho: null,
-    });
+    const [dropAreas, setDropAreas] = useState({ izquierdo: null, derecho: null });
 
     useEffect(() => {
-        const bloquesIniciales = colores.map((color) => ({
-            id: Math.random().toString(36).substring(7),
-            peso: generarPesoAleatorio(),
-            color,
-            colocados: false,
-            pan: new Animated.ValueXY(),
-            lado: null,
-        }));
-        setBloques(bloquesIniciales);
+        const nuevos = [];
+        COLORES.forEach((color) => {
+            for (let i = 0; i < 2; i++) {
+                nuevos.push({
+                    id: `${color}-${i}-${Math.random().toString(36).substring(7)}`,
+                    color,
+                    peso: Math.floor(Math.random() * 19) + 2,
+                    usado: false,
+                    pan: new Animated.ValueXY(),
+                });
+            }
+        });
+        setBloques(nuevos);
     }, []);
 
     useEffect(() => {
-        const mensaje = {
-            type: "ENTRADA",
-            jugador: nombre,
-        };
+        const mensaje = { type: "ENTRADA", jugador: nombre };
 
         if (socket.readyState === 1) {
             socket.send(JSON.stringify(mensaje));
         } else {
-            socket.onopen = () => {
-                socket.send(JSON.stringify(mensaje));
-            };
+            socket.onopen = () => socket.send(JSON.stringify(mensaje));
         }
 
         socket.onmessage = (e) => {
@@ -65,7 +59,8 @@ export default function GameScreen() {
                 if (data.type === "TURNO") {
                     setMiTurno(data.tuTurno);
                     setJugadorEnTurno(data.jugadorEnTurno);
-                    if (data.tuTurno && !eliminado) {
+
+                    if (data.tuTurno) {
                         setContador(60);
                         clearInterval(intervaloRef.current);
                         intervaloRef.current = setInterval(() => {
@@ -77,54 +72,58 @@ export default function GameScreen() {
                                 return prev - 1;
                             });
                         }, 1000);
-                    } else {
-                        clearInterval(intervaloRef.current);
-                        setContador(0);
                     }
-                } else if (data.type === "MENSAJE") {
-                    setMensajes((prev) => [...prev, data.contenido]);
-                } else if (data.type === "ACTUALIZAR_BALANZA") {
+                }
+
+                if (data.type === "ACTUALIZAR_BALANZA") {
                     setPesoIzq(data.izquierdo);
                     setPesoDer(data.derecho);
-                } else if (data.type === "ELIMINADO") {
-                    Alert.alert("⚠️ Has sido eliminado", data.mensaje);
+                }
+
+                if (data.type === "MENSAJE") {
+                    setMensajes((prev) => [...prev, data.contenido]);
+                }
+
+                if (data.type === "ELIMINADO") {
                     setEliminado(true);
                     setMiTurno(false);
+                    Alert.alert("Has sido eliminado", data.mensaje);
+                }
+
+                if (data.type === "RESUMEN") {
                     clearInterval(intervaloRef.current);
-                    setContador(0);
-                } else if (data.type === "RESUMEN") {
-                    clearInterval(intervaloRef.current);
-                    setContador(0);
                     setResumenFinal(data);
                 }
             } catch (err) {
-                console.error("❌ Error procesando mensaje:", err);
+                console.error("❌ Error al procesar mensaje:", err);
             }
         };
 
         return () => {
-            if (socket.readyState === 1) socket.close();
             clearInterval(intervaloRef.current);
+            if (socket.readyState === 1) socket.close();
         };
     }, []);
 
     const enviarJugada = (bloque, lado) => {
-        const mensaje = {
-            type: "JUGADA",
-            jugador: nombre,
-            peso: bloque.peso,
-        };
-        socket.send(JSON.stringify(mensaje));
+        socket.send(
+            JSON.stringify({
+                type: "JUGADA",
+                jugador: nombre,
+                peso: bloque.peso,
+                color: bloque.color,
+                lado,
+            })
+        );
 
         setBloques((prev) =>
-            prev.map((b) =>
-                b.id === bloque.id ? { ...b, colocados: true, lado } : b
-            )
+            prev.map((b) => (b.id === bloque.id ? { ...b, usado: true } : b))
         );
+        setMiTurno(false);
     };
 
     const renderBloque = (bloque) => {
-        if (bloque.colocados) return null;
+        if (bloque.usado) return null;
 
         const panResponder = PanResponder.create({
             onStartShouldSetPanResponder: () => miTurno && !eliminado,
@@ -133,17 +132,22 @@ export default function GameScreen() {
                 { useNativeDriver: false }
             ),
             onPanResponderRelease: (_, gesture) => {
-                bloque.pan.extractOffset();
+                const { izquierdo, derecho } = dropAreas;
 
-                if (
-                    dropAreas.izquierdo &&
-                    isInDropArea(gesture, dropAreas.izquierdo)
-                ) {
+                if (!izquierdo || !derecho) {
+                    Animated.spring(bloque.pan, {
+                        toValue: { x: 0, y: 0 },
+                        useNativeDriver: false,
+                    }).start();
+                    return;
+                }
+
+                const inIzq = isInDropArea(gesture, izquierdo);
+                const inDer = isInDropArea(gesture, derecho);
+
+                if (inIzq) {
                     enviarJugada(bloque, "izquierdo");
-                } else if (
-                    dropAreas.derecho &&
-                    isInDropArea(gesture, dropAreas.derecho)
-                ) {
+                } else if (inDer) {
                     enviarJugada(bloque, "derecho");
                 } else {
                     Animated.spring(bloque.pan, {
@@ -168,159 +172,113 @@ export default function GameScreen() {
     };
 
     const isInDropArea = (gesture, area) => {
-        const { pageX, pageY } = gesture.moveX
-            ? { pageX: gesture.moveX, pageY: gesture.moveY }
-            : gesture;
+        if (
+            !area ||
+            typeof area.x !== "number" ||
+            typeof area.y !== "number" ||
+            typeof area.width !== "number" ||
+            typeof area.height !== "number"
+        ) return false;
+
+        const { moveX, moveY } = gesture;
         return (
-            pageX > area.x &&
-            pageX < area.x + area.width &&
-            pageY > area.y &&
-            pageY < area.y + area.height
+            moveX > area.x &&
+            moveX < area.x + area.width &&
+            moveY > area.y &&
+            moveY < area.y + area.height
         );
     };
 
     const inclinacion = pesoIzq === pesoDer ? 0 : pesoIzq > pesoDer ? -10 : 10;
 
     if (resumenFinal) {
-        const esSobreviviente = resumenFinal.sobrevivientes.includes(nombre);
-        const [adivinanzas, setAdivinanzas] = useState({});
-        const [mostrarResultado, setMostrarResultado] = useState(false);
-        const [resultadoAciertos, setResultadoAciertos] = useState(0);
-
-        const misBloques = resumenFinal.bloquesPorJugador[nombre] || [];
-
-        const verificarAciertos = async () => {
-            let aciertos = 0;
-            const detalle = [];
-
-            misBloques.forEach((bloque, i) => {
-                const guess = parseInt(adivinanzas[i]);
-                const acertado = guess === bloque.peso;
-                if (acertado) aciertos++;
-                detalle.push({
-                    intento: guess,
-                    pesoReal: bloque.peso,
-                    acertado
-                });
-            });
-
-            setResultadoAciertos(aciertos);
-            setMostrarResultado(true);
-
-            // Enviar a MongoDB
-            try {
-                await fetch("http://localhost:5000/adivinanzas", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        jugador: nombre,
-                        bloques: detalle,
-                        aciertos
-                    })
-                });
-            } catch (err) {
-                console.error("❌ Error guardando adivinanza:", err.message);
-            }
-        };
-
         return (
             <ScrollView style={{ padding: 20 }}>
                 <Text style={styles.tituloResumen}>🏁 Juego finalizado</Text>
-                <Text>⚖️ Peso total izquierdo: {resumenFinal.totales.izquierdo}g</Text>
-                <Text>⚖️ Peso total derecho: {resumenFinal.totales.derecho}g</Text>
+                <Text>⚖️ Total izquierdo: {resumenFinal.totales.izquierdo}g</Text>
+                <Text>⚖️ Total derecho: {resumenFinal.totales.derecho}g</Text>
                 <Text>🏆 Lado ganador: {resumenFinal.ganador}</Text>
-                <Text>👤 Sobrevivientes: {resumenFinal.sobrevivientes.join(", ") || "Ninguno"}</Text>
+                <Text>🎮 Jugadores activos: {resumenFinal.sobrevivientes.join(", ")}</Text>
 
-                <Text style={{ marginTop: 20, fontWeight: "bold" }}>📋 Jugadas por turno:</Text>
+                <Text style={{ marginTop: 20, fontWeight: "bold" }}>📋 Jugadas:</Text>
                 {resumenFinal.contenido.map((j, i) => (
-                    <Text key={i}>Turno {j.turno}: {j.jugador} colocó {j.peso}g</Text>
+                    <Text key={i}>
+                        Turno {j.turno}: {j.jugador} colocó {j.peso}g ({j.color})
+                    </Text>
                 ))}
-
-                {esSobreviviente && !mostrarResultado && (
-                    <View style={{ marginTop: 30 }}>
-                        <Text style={{ fontSize: 18, fontWeight: "bold", marginBottom: 10 }}>
-                            🎯 Adivina el peso de tus bloques:
-                        </Text>
-                        {misBloques.map((bloque, i) => (
-                            <View key={i} style={{ marginBottom: 10 }}>
-                                <Text>Bloque {i + 1} (color {bloque.color || "?"}):</Text>
-                                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                                    <Text>🎯 Tu adivinanza:</Text>
-                                    <ScrollView horizontal>
-                                        {[...Array(19)].map((_, n) => {
-                                            const valor = n + 2;
-                                            return (
-                                                <Text
-                                                    key={valor}
-                                                    style={{
-                                                        padding: 6,
-                                                        margin: 2,
-                                                        borderWidth: 1,
-                                                        backgroundColor:
-                                                            adivinanzas[i] == valor ? "#add8e6" : "#eee",
-                                                    }}
-                                                    onPress={() =>
-                                                        setAdivinanzas((prev) => ({
-                                                            ...prev,
-                                                            [i]: valor,
-                                                        }))
-                                                    }
-                                                >
-                                                    {valor}
-                                                </Text>
-                                            );
-                                        })}
-                                    </ScrollView>
-                                </View>
-                            </View>
-                        ))}
-                        <Text
-                            onPress={verificarAciertos}
-                            style={{
-                                marginTop: 20,
-                                backgroundColor: "#008080",
-                                color: "white",
-                                padding: 10,
-                                textAlign: "center",
-                                borderRadius: 6,
-                            }}
-                        >
-                            ✅ Enviar respuestas
-                        </Text>
-                    </View>
-                )}
-
-                {mostrarResultado && (
-                    <View style={{ marginTop: 30 }}>
-                        <Text style={{ fontSize: 18 }}>
-                            🎉 ¡Adivinaste correctamente {resultadoAciertos} de {misBloques.length} bloques!
-                        </Text>
-                    </View>
-                )}
             </ScrollView>
         );
     }
+
+    return (
+        <View style={{ flex: 1, padding: 20 }}>
+            <Text style={styles.titulo}>Jugador: {nombre}</Text>
+            <Text style={styles.subtitulo}>Turno de: {jugadorEnTurno || "..."}</Text>
+            <Text style={{ color: "red", marginBottom: 10 }}>
+                {miTurno ? `⏱️ Tiempo: ${contador}s` : "⏳ Esperando turno..."}
+            </Text>
+
+            <View style={{ alignItems: "center", marginTop: 20 }}>
+                <Text style={{ marginBottom: 10 }}>⚖️ Balanza</Text>
+                <View
+                    style={{
+                        width: 200,
+                        height: 20,
+                        backgroundColor: "#444",
+                        transform: [{ rotate: `${inclinacion}deg` }],
+                        borderRadius: 10,
+                    }}
+                />
+                <View
+                    style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        width: 200,
+                        marginTop: 10,
+                    }}
+                >
+                    <View
+                        onLayout={(e) =>
+                            setDropAreas((prev) => ({
+                                ...prev,
+                                izquierdo: e.nativeEvent.layout,
+                            }))
+                        }
+                    >
+                        <Text>Izq: {pesoIzq}g</Text>
+                    </View>
+                    <View
+                        onLayout={(e) =>
+                            setDropAreas((prev) => ({
+                                ...prev,
+                                derecho: e.nativeEvent.layout,
+                            }))
+                        }
+                    >
+                        <Text>Der: {pesoDer}g</Text>
+                    </View>
+                </View>
+            </View>
+
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 30 }}>
+                {bloques.map(renderBloque)}
+            </View>
+
+            <Text style={{ marginTop: 30, fontWeight: "bold" }}>📨 Mensajes:</Text>
+            <ScrollView style={{ marginTop: 10, maxHeight: 200 }}>
+                {mensajes.map((msg, idx) => (
+                    <Text key={idx} style={{ marginBottom: 5 }}>
+                        {msg}
+                    </Text>
+                ))}
+            </ScrollView>
+        </View>
+    );
 }
 
 const styles = StyleSheet.create({
-    titulo: {
-        fontSize: 18,
-        marginBottom: 10,
-    },
-    subtitulo: {
-        fontSize: 16,
-        fontWeight: "bold",
-        marginBottom: 10,
-    },
-    tituloResumen: {
-        fontSize: 22,
-        fontWeight: "bold",
-        marginBottom: 20,
-    },
-    bloque: {
-        width: 50,
-        height: 50,
-        borderRadius: 8,
-        margin: 8,
-    },
+    titulo: { fontSize: 18, marginBottom: 10 },
+    subtitulo: { fontSize: 16, fontWeight: "bold", marginBottom: 10 },
+    tituloResumen: { fontSize: 22, fontWeight: "bold", marginBottom: 20 },
+    bloque: { width: 50, height: 50, borderRadius: 8, margin: 8 },
 });

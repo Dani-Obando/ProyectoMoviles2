@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Adivinanza = require('./models/Adivinanza');
+const Adivinanza = require('../models/Adivinanza');
 
 // Guardar adivinanza
 router.post('/', async (req, res) => {

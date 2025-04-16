@@ -1,12 +1,12 @@
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const cors = require('cors');
-const conectarDB = require('./db');
-const jugadasRoute = require('./routes/jugadas');
-const Jugada = require('./models/Jugada');
-const adivinanzasRoute = require('./routes/adivinanzas');
-
+const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
+const cors = require("cors");
+const conectarDB = require("./db");
+const Jugada = require("./models/Jugada");
+const Adivinanza = require("./models/Adivinanza");
+const jugadasRoute = require("./routes/jugadas");
+const adivinanzasRoute = require("./routes/adivinanzas");
 
 const app = express();
 const server = http.createServer(app);
@@ -14,9 +14,8 @@ const wss = new WebSocket.Server({ server });
 
 app.use(cors());
 app.use(express.json());
-app.use('/jugadas', jugadasRoute);
-app.use('/adivinanzas', adivinanzasRoute);
-
+app.use("/jugadas", jugadasRoute);
+app.use("/adivinanzas", adivinanzasRoute);
 
 conectarDB();
 
@@ -24,35 +23,49 @@ let jugadores = [];
 let turnoActual = 0;
 let pesoIzquierdo = 0;
 let pesoDerecho = 0;
-let ladoActual = 'izquierdo';
+let ladoActual = "izquierdo";
 let totalJugadas = 0;
-const MAX_JUGADAS = 10;
+let bloquesTotales = 0;
+let bloquesPorJugador = {};
 let turnoTimeout = null;
 
-wss.on('connection', (ws) => {
+const COLORES = ["red", "blue", "green", "orange", "purple"];
+
+wss.on("connection", (ws) => {
     ws.id = Math.random().toString(36).substring(2);
     ws.eliminado = false;
     jugadores.push(ws);
     console.log(`🟢 Nuevo jugador conectado: ${ws.id}`);
 
-    ws.on('message', async (data) => {
+    ws.on("message", async (data) => {
         try {
             const msg = JSON.parse(data);
 
-            if (msg.type === 'ENTRADA') {
+            if (msg.type === "ENTRADA") {
                 ws.nombre = msg.jugador;
+                if (!bloquesPorJugador[msg.jugador]) {
+                    const bloques = [];
+                    COLORES.forEach((color) => {
+                        for (let i = 0; i < 2; i++) {
+                            const peso = Math.floor(Math.random() * 19) + 2;
+                            bloques.push({ color, peso });
+                            bloquesTotales++;
+                        }
+                    });
+                    bloquesPorJugador[msg.jugador] = bloques;
+                }
+
                 broadcast({
-                    type: 'MENSAJE',
+                    type: "MENSAJE",
                     contenido: `${msg.jugador} se unió al juego.`,
                 });
+
                 enviarTurno();
             }
 
-            if (msg.type === 'JUGADA') {
+            if (msg.type === "JUGADA") {
                 clearTimeout(turnoTimeout);
-
                 const jugadorActual = jugadores[turnoActual];
-                if (jugadorActual.eliminado) return;
 
                 const jugada = new Jugada({
                     jugador: msg.jugador,
@@ -60,67 +73,44 @@ wss.on('connection', (ws) => {
                     peso: msg.peso,
                     equipo: 0,
                     eliminado: false,
+                    color: msg.color,
                 });
                 await jugada.save();
 
-                let eliminado = false;
-
-                if (ladoActual === 'izquierdo') {
+                if (ladoActual === "izquierdo") {
                     pesoIzquierdo += msg.peso;
-                    if (pesoIzquierdo > 50) {
-                        eliminado = true;
-                        pesoIzquierdo -= msg.peso;
-                    } else {
-                        ladoActual = 'derecho';
-                    }
+                    ladoActual = "derecho";
                 } else {
                     pesoDerecho += msg.peso;
-                    if (pesoDerecho > 50) {
-                        eliminado = true;
-                        pesoDerecho -= msg.peso;
-                    } else {
-                        ladoActual = 'izquierdo';
-                    }
+                    ladoActual = "izquierdo";
                 }
 
-                if (eliminado) {
-                    jugadorActual.eliminado = true;
-                    jugadorActual.send(JSON.stringify({
-                        type: 'ELIMINADO',
-                        mensaje: 'Has sido eliminado por exceder el peso permitido.'
-                    }));
-                    broadcast({
-                        type: 'MENSAJE',
-                        contenido: `${msg.jugador} fue eliminado por sobrepeso.`
-                    });
-                } else {
-                    broadcast({
-                        type: 'ACTUALIZAR_BALANZA',
-                        izquierdo: pesoIzquierdo,
-                        derecho: pesoDerecho,
-                        jugador: msg.jugador
-                    });
+                broadcast({
+                    type: "ACTUALIZAR_BALANZA",
+                    izquierdo: pesoIzquierdo,
+                    derecho: pesoDerecho,
+                    jugador: msg.jugador,
+                });
 
-                    broadcast({
-                        type: 'MENSAJE',
-                        contenido: `${msg.jugador} colocó ${msg.peso}g en el lado ${ladoActual === 'izquierdo' ? 'derecho' : 'izquierdo'}`
-                    });
-                }
+                broadcast({
+                    type: "MENSAJE",
+                    contenido: `${msg.jugador} colocó ${msg.peso}g`,
+                });
 
                 totalJugadas++;
 
-                if (totalJugadas >= MAX_JUGADAS) {
+                if (totalJugadas >= bloquesTotales) {
                     enviarResumenFinal();
                 } else {
                     avanzarTurno();
                 }
             }
         } catch (err) {
-            console.error('❌ Error:', err.message);
+            console.error("❌ Error:", err.message);
         }
     });
 
-    ws.on('close', () => {
+    ws.on("close", () => {
         console.log(`🔴 Jugador desconectado: ${ws.id}`);
         jugadores = jugadores.filter((j) => j !== ws);
         if (turnoActual >= jugadores.length) turnoActual = 0;
@@ -147,7 +137,7 @@ function enviarTurno() {
             try {
                 j.send(
                     JSON.stringify({
-                        type: 'TURNO',
+                        type: "TURNO",
                         tuTurno: i === turnoActual && !j.eliminado,
                         jugadorEnTurno: nombreActual,
                     })
@@ -158,26 +148,27 @@ function enviarTurno() {
         }
     });
 
-    // Temporizador de 60 segundos para actuar
     turnoTimeout = setTimeout(() => {
         if (!jugadores[turnoActual]?.eliminado) {
             jugadores[turnoActual].eliminado = true;
-            jugadores[turnoActual].send(JSON.stringify({
-                type: 'ELIMINADO',
-                mensaje: 'Has sido eliminado por inactividad (60s sin mover bloque).'
-            }));
+            jugadores[turnoActual].send(
+                JSON.stringify({
+                    type: "ELIMINADO",
+                    mensaje: "Has sido eliminado por inactividad (60s sin mover bloque).",
+                })
+            );
             broadcast({
-                type: 'MENSAJE',
-                contenido: `${jugadores[turnoActual].nombre} fue eliminado por inactividad.`
+                type: "MENSAJE",
+                contenido: `${jugadores[turnoActual].nombre} fue eliminado por inactividad.`,
             });
         }
 
         avanzarTurno();
-    }, 60000); // 60 segundos
+    }, 60000);
 }
 
 function broadcast(data) {
-    const mensaje = typeof data === 'string' ? data : JSON.stringify(data);
+    const mensaje = typeof data === "string" ? data : JSON.stringify(data);
     jugadores.forEach((j) => {
         if (j.readyState === WebSocket.OPEN) {
             try {
@@ -192,14 +183,16 @@ function broadcast(data) {
 async function enviarResumenFinal() {
     const jugadas = await Jugada.find().sort({ turno: 1 });
 
-    const resumen = jugadas.map(j => ({
+    const resumen = jugadas.map((j) => ({
         jugador: j.jugador,
         turno: j.turno,
         peso: j.peso,
-        color: j.color || null  // por si luego se registra el color
+        color: j.color || null,
     }));
 
-    const sobrevivientes = jugadores.filter(j => !j.eliminado).map(j => j.nombre || "Jugador");
+    const sobrevivientes = jugadores
+        .filter((j) => !j.eliminado)
+        .map((j) => j.nombre || "Jugador");
 
     const ladoGanador =
         pesoIzquierdo === pesoDerecho
@@ -208,17 +201,8 @@ async function enviarResumenFinal() {
                 ? "Izquierdo"
                 : "Derecho";
 
-    // agrupar jugadas por jugador
-    const bloquesPorJugador = {};
-    resumen.forEach(j => {
-        if (!bloquesPorJugador[j.jugador]) {
-            bloquesPorJugador[j.jugador] = [];
-        }
-        bloquesPorJugador[j.jugador].push({ peso: j.peso, color: j.color || null });
-    });
-
     broadcast({
-        type: 'RESUMEN',
+        type: "RESUMEN",
         contenido: resumen,
         totales: {
             izquierdo: pesoIzquierdo,
@@ -226,10 +210,9 @@ async function enviarResumenFinal() {
         },
         sobrevivientes,
         ganador: ladoGanador,
-        bloquesPorJugador
+        bloquesPorJugador,
     });
 }
-
 
 const PORT = 5000;
 server.listen(PORT, () => {
