@@ -5,6 +5,8 @@ const cors = require('cors');
 const conectarDB = require('./db');
 const jugadasRoute = require('./routes/jugadas');
 const Jugada = require('./models/Jugada');
+const adivinanzasRoute = require('./routes/adivinanzas');
+
 
 const app = express();
 const server = http.createServer(app);
@@ -13,6 +15,8 @@ const wss = new WebSocket.Server({ server });
 app.use(cors());
 app.use(express.json());
 app.use('/jugadas', jugadasRoute);
+app.use('/adivinanzas', adivinanzasRoute);
+
 
 conectarDB();
 
@@ -23,6 +27,7 @@ let pesoDerecho = 0;
 let ladoActual = 'izquierdo';
 let totalJugadas = 0;
 const MAX_JUGADAS = 10;
+let turnoTimeout = null;
 
 wss.on('connection', (ws) => {
     ws.id = Math.random().toString(36).substring(2);
@@ -44,6 +49,8 @@ wss.on('connection', (ws) => {
             }
 
             if (msg.type === 'JUGADA') {
+                clearTimeout(turnoTimeout);
+
                 const jugadorActual = jugadores[turnoActual];
                 if (jugadorActual.eliminado) return;
 
@@ -105,11 +112,7 @@ wss.on('connection', (ws) => {
                 if (totalJugadas >= MAX_JUGADAS) {
                     enviarResumenFinal();
                 } else {
-                    do {
-                        turnoActual = (turnoActual + 1) % jugadores.length;
-                    } while (jugadores[turnoActual]?.eliminado && jugadores.length > 1);
-
-                    enviarTurno();
+                    avanzarTurno();
                 }
             }
         } catch (err) {
@@ -125,9 +128,20 @@ wss.on('connection', (ws) => {
     });
 });
 
+function avanzarTurno() {
+    do {
+        turnoActual = (turnoActual + 1) % jugadores.length;
+    } while (jugadores[turnoActual]?.eliminado && jugadores.length > 1);
+
+    enviarTurno();
+}
+
 function enviarTurno() {
+    clearTimeout(turnoTimeout);
+
     const jugadorActual = jugadores[turnoActual];
     const nombreActual = jugadorActual?.nombre || `Jugador ${turnoActual + 1}`;
+
     jugadores.forEach((j, i) => {
         if (j.readyState === WebSocket.OPEN) {
             try {
@@ -143,6 +157,23 @@ function enviarTurno() {
             }
         }
     });
+
+    // Temporizador de 60 segundos para actuar
+    turnoTimeout = setTimeout(() => {
+        if (!jugadores[turnoActual]?.eliminado) {
+            jugadores[turnoActual].eliminado = true;
+            jugadores[turnoActual].send(JSON.stringify({
+                type: 'ELIMINADO',
+                mensaje: 'Has sido eliminado por inactividad (60s sin mover bloque).'
+            }));
+            broadcast({
+                type: 'MENSAJE',
+                contenido: `${jugadores[turnoActual].nombre} fue eliminado por inactividad.`
+            });
+        }
+
+        avanzarTurno();
+    }, 60000); // 60 segundos
 }
 
 function broadcast(data) {
@@ -164,14 +195,41 @@ async function enviarResumenFinal() {
     const resumen = jugadas.map(j => ({
         jugador: j.jugador,
         turno: j.turno,
-        peso: j.peso
+        peso: j.peso,
+        color: j.color || null  // por si luego se registra el color
     }));
+
+    const sobrevivientes = jugadores.filter(j => !j.eliminado).map(j => j.nombre || "Jugador");
+
+    const ladoGanador =
+        pesoIzquierdo === pesoDerecho
+            ? "Empate"
+            : pesoIzquierdo < pesoDerecho
+                ? "Izquierdo"
+                : "Derecho";
+
+    // agrupar jugadas por jugador
+    const bloquesPorJugador = {};
+    resumen.forEach(j => {
+        if (!bloquesPorJugador[j.jugador]) {
+            bloquesPorJugador[j.jugador] = [];
+        }
+        bloquesPorJugador[j.jugador].push({ peso: j.peso, color: j.color || null });
+    });
 
     broadcast({
         type: 'RESUMEN',
-        contenido: resumen
+        contenido: resumen,
+        totales: {
+            izquierdo: pesoIzquierdo,
+            derecho: pesoDerecho,
+        },
+        sobrevivientes,
+        ganador: ladoGanador,
+        bloquesPorJugador
     });
 }
+
 
 const PORT = 5000;
 server.listen(PORT, () => {
