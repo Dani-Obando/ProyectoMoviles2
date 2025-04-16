@@ -8,12 +8,10 @@ import {
     Alert,
     Animated,
     PanResponder,
-    Dimensions,
 } from "react-native";
 import socket from "../sockets/connection";
 
 const COLORES = ["red", "blue", "green", "orange", "purple"];
-const { width } = Dimensions.get("window");
 
 export default function GameScreen() {
     const { nombre, modo } = useLocalSearchParams();
@@ -23,48 +21,35 @@ export default function GameScreen() {
     const [jugadorEnTurno, setJugadorEnTurno] = useState("");
     const [pesoIzq, setPesoIzq] = useState(0);
     const [pesoDer, setPesoDer] = useState(0);
-    const [resumenFinal, setResumenFinal] = useState(null);
     const [eliminado, setEliminado] = useState(false);
     const [contador, setContador] = useState(60);
-    const [jugadoresConectados, setJugadoresConectados] = useState(1);
-    const [esperando, setEsperando] = useState(modo === "multijugador");
+    const intervaloRef = useRef(null);
     const [dropAreas, setDropAreas] = useState({ izquierdo: null, derecho: null });
-
     const refIzquierdo = useRef(null);
     const refDerecho = useRef(null);
-    const intervaloRef = useRef(null);
 
     useEffect(() => {
         const nuevos = [];
-        const inicioX = 20;
-        const inicioY = 500;
-        let fila = 0;
-        let col = 0;
-
         COLORES.forEach((color) => {
             for (let i = 0; i < 2; i++) {
-                const posX = inicioX + col * 70;
-                const posY = inicioY + fila * 70;
                 nuevos.push({
                     id: `${color}-${i}-${Math.random().toString(36).substring(7)}`,
                     color,
                     peso: Math.floor(Math.random() * 19) + 2,
                     usado: false,
-                    pan: new Animated.ValueXY({ x: posX, y: posY }),
-                    origen: { x: posX, y: posY },
+                    pan: new Animated.ValueXY(),
                 });
-                col++;
-                if (col >= 5) {
-                    col = 0;
-                    fila++;
-                }
             }
         });
         setBloques(nuevos);
     }, []);
 
     useEffect(() => {
-        const mensaje = { type: "ENTRADA", jugador: nombre };
+        const mensaje = {
+            type: "ENTRADA",
+            jugador: nombre,
+            modo: modo,
+        };
 
         if (socket.readyState === 1) {
             socket.send(JSON.stringify(mensaje));
@@ -79,6 +64,7 @@ export default function GameScreen() {
                 if (data.type === "TURNO") {
                     setMiTurno(data.tuTurno);
                     setJugadorEnTurno(data.jugadorEnTurno);
+
                     if (data.tuTurno && !eliminado) {
                         setContador(60);
                         clearInterval(intervaloRef.current);
@@ -91,6 +77,9 @@ export default function GameScreen() {
                                 return prev - 1;
                             });
                         }, 1000);
+                    } else {
+                        clearInterval(intervaloRef.current);
+                        setContador(0);
                     }
                 }
 
@@ -111,17 +100,11 @@ export default function GameScreen() {
 
                 if (data.type === "RESUMEN") {
                     clearInterval(intervaloRef.current);
-                    setResumenFinal(data);
-                }
-
-                if (data.type === "ENTRADA" && modo === "multijugador") {
-                    setJugadoresConectados(data.totalJugadores || 1);
-                    if ((data.totalJugadores || 1) >= 10) {
-                        setEsperando(false);
-                    }
+                    setContador(0);
+                    // Aquí puedes mostrar un resumen bonito al final si lo necesitas
                 }
             } catch (err) {
-                console.error("❌ Error al procesar mensaje:", err);
+                console.error("❌ Error procesando mensaje:", err);
             }
         };
 
@@ -129,7 +112,7 @@ export default function GameScreen() {
             clearInterval(intervaloRef.current);
             if (socket.readyState === 1) socket.close();
         };
-    }, [modo]);
+    }, []);
 
     const enviarJugada = (bloque, lado) => {
         socket.send(
@@ -153,11 +136,7 @@ export default function GameScreen() {
         const panResponder = PanResponder.create({
             onStartShouldSetPanResponder: () => miTurno && !eliminado,
             onPanResponderGrant: () => {
-                bloque.pan.setOffset({
-                    x: bloque.pan.x._value,
-                    y: bloque.pan.y._value,
-                });
-                bloque.pan.setValue({ x: 0, y: 0 });
+                bloque.pan.extractOffset(); // <-- ✅ para que se mueva libremente sin offset raro
             },
             onPanResponderMove: Animated.event(
                 [null, { dx: bloque.pan.x, dy: bloque.pan.y }],
@@ -175,10 +154,7 @@ export default function GameScreen() {
                     enviarJugada(bloque, "derecho");
                 } else {
                     Animated.spring(bloque.pan, {
-                        toValue: {
-                            x: bloque.origen.x,
-                            y: bloque.origen.y,
-                        },
+                        toValue: { x: 0, y: 0 },
                         useNativeDriver: false,
                     }).start();
                 }
@@ -192,34 +168,28 @@ export default function GameScreen() {
                 style={[
                     styles.bloque,
                     { backgroundColor: bloque.color },
-                    bloque.pan.getLayout(),
+                    {
+                        transform: [
+                            { translateX: bloque.pan.x },
+                            { translateY: bloque.pan.y },
+                        ],
+                    },
                 ]}
             />
         );
     };
 
+
     const isInDropArea = (gesture, area) => {
         if (!area) return false;
+        const { moveX, moveY } = gesture;
         return (
-            gesture.moveX > area.x &&
-            gesture.moveX < area.x + area.width &&
-            gesture.moveY > area.y &&
-            gesture.moveY < area.y + area.height
+            moveX > area.x &&
+            moveX < area.x + area.width &&
+            moveY > area.y &&
+            moveY < area.y + area.height
         );
     };
-
-    const inclinacion = pesoIzq === pesoDer ? 0 : pesoIzq > pesoDer ? -10 : 10;
-
-    if (modo === "multijugador" && esperando) {
-        return (
-            <View style={styles.centered}>
-                <Text style={styles.esperando}>
-                    Esperando a {10 - jugadoresConectados} jugador
-                    {10 - jugadoresConectados !== 1 ? "es" : ""} más...
-                </Text>
-            </View>
-        );
-    }
 
     return (
         <View style={{ flex: 1, padding: 20 }}>
@@ -236,7 +206,7 @@ export default function GameScreen() {
                         width: 200,
                         height: 20,
                         backgroundColor: "#444",
-                        transform: [{ rotate: `${inclinacion}deg` }],
+                        transform: [{ rotate: `${pesoIzq > pesoDer ? -10 : pesoIzq < pesoDer ? 10 : 0}deg` }],
                         borderRadius: 10,
                     }}
                 />
@@ -279,7 +249,7 @@ export default function GameScreen() {
                 </View>
             </View>
 
-            <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 30 }}>
                 {bloques.map(renderBloque)}
             </View>
 
@@ -299,14 +269,12 @@ const styles = StyleSheet.create({
     bloque: {
         width: 60,
         height: 60,
+        margin: 10,
         borderRadius: 8,
-        position: "absolute",
         elevation: 4,
         shadowColor: "#000",
         shadowOpacity: 0.3,
         shadowOffset: { width: 2, height: 2 },
         shadowRadius: 3,
     },
-    esperando: { fontSize: 18, textAlign: "center" },
-    centered: { flex: 1, justifyContent: "center", alignItems: "center" },
 });
