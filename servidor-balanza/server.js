@@ -34,7 +34,8 @@ const COLORES = ["red", "blue", "green", "orange", "purple"];
 wss.on("connection", (ws) => {
     ws.id = Math.random().toString(36).substring(2);
     ws.eliminado = false;
-    jugadores.push(ws);
+    ws.isIndividual = false;
+
     console.log(`🟢 Nuevo jugador conectado: ${ws.id}`);
 
     ws.on("message", async (data) => {
@@ -43,7 +44,7 @@ wss.on("connection", (ws) => {
 
             if (msg.type === "ENTRADA") {
                 ws.nombre = msg.jugador;
-                ws.individual = msg.modo === "individual";
+                ws.isIndividual = msg.modo === "individual";
 
                 if (!bloquesPorJugador[msg.jugador]) {
                     const bloques = [];
@@ -57,18 +58,24 @@ wss.on("connection", (ws) => {
                     bloquesPorJugador[msg.jugador] = bloques;
                 }
 
-                if (ws.individual) {
-                    ws.send(JSON.stringify({
-                        type: "TURNO",
-                        tuTurno: true,
-                        jugadorEnTurno: ws.nombre,
-                    }));
+                if (!ws.isIndividual) {
+                    jugadores.push(ws);
+                }
+
+                broadcast({
+                    type: "MENSAJE",
+                    contenido: `${msg.jugador} se unió al juego.`,
+                });
+
+                if (ws.isIndividual) {
+                    ws.send(
+                        JSON.stringify({
+                            type: "TURNO",
+                            tuTurno: true,
+                            jugadorEnTurno: ws.nombre,
+                        })
+                    );
                 } else {
-                    broadcast({
-                        type: "MENSAJE",
-                        contenido: `${msg.jugador} se unió al juego.`,
-                        totalJugadores: jugadores.filter(j => !j.individual).length,
-                    });
                     enviarTurno();
                 }
             }
@@ -80,17 +87,21 @@ wss.on("connection", (ws) => {
                     jugador: msg.jugador,
                     turno: totalJugadas + 1,
                     peso: msg.peso,
-                    color: msg.color,
+                    equipo: 0,
                     eliminado: false,
+                    color: msg.color,
                 });
                 await jugada.save();
 
-                if (msg.lado === "izquierdo") {
-                    pesoIzquierdo += msg.peso;
-                } else if (msg.lado === "derecho") {
-                    pesoDerecho += msg.peso;
-                }
+                const jugadorActual = jugadores.find((j) => j.nombre === msg.jugador);
+                const esIndividual = ws.isIndividual;
 
+                if (msg.lado === "izquierdo") pesoIzquierdo += msg.peso;
+                else pesoDerecho += msg.peso;
+
+                if (!esIndividual) {
+                    ladoActual = ladoActual === "izquierdo" ? "derecho" : "izquierdo";
+                }
 
                 broadcast({
                     type: "ACTUALIZAR_BALANZA",
@@ -109,7 +120,16 @@ wss.on("connection", (ws) => {
                 if (totalJugadas >= bloquesTotales) {
                     enviarResumenFinal();
                 } else {
-                    avanzarTurno();
+                    if (!esIndividual) avanzarTurno();
+                    else {
+                        ws.send(
+                            JSON.stringify({
+                                type: "TURNO",
+                                tuTurno: true,
+                                jugadorEnTurno: ws.nombre,
+                            })
+                        );
+                    }
                 }
             }
         } catch (err) {
@@ -141,11 +161,13 @@ function enviarTurno() {
 
     jugadores.forEach((j, i) => {
         if (j.readyState === WebSocket.OPEN) {
-            j.send(JSON.stringify({
-                type: "TURNO",
-                tuTurno: i === turnoActual && !j.eliminado,
-                jugadorEnTurno: nombreActual,
-            }));
+            j.send(
+                JSON.stringify({
+                    type: "TURNO",
+                    tuTurno: i === turnoActual && !j.eliminado,
+                    jugadorEnTurno: nombreActual,
+                })
+            );
         }
     });
 
@@ -170,7 +192,7 @@ function enviarTurno() {
 
 function broadcast(data) {
     const mensaje = typeof data === "string" ? data : JSON.stringify(data);
-    jugadores.forEach((j) => {
+    wss.clients.forEach((j) => {
         if (j.readyState === WebSocket.OPEN) {
             j.send(mensaje);
         }
@@ -187,13 +209,16 @@ async function enviarResumenFinal() {
         color: j.color || null,
     }));
 
-    const sobrevivientes = jugadores.filter(j => !j.eliminado).map(j => j.nombre);
+    const sobrevivientes = jugadores
+        .filter((j) => !j.eliminado)
+        .map((j) => j.nombre || "Jugador");
 
-    const ladoGanador = pesoIzquierdo === pesoDerecho
-        ? "Empate"
-        : pesoIzquierdo < pesoDerecho
-            ? "Izquierdo"
-            : "Derecho";
+    const ladoGanador =
+        pesoIzquierdo === pesoDerecho
+            ? "Empate"
+            : pesoIzquierdo < pesoDerecho
+                ? "Izquierdo"
+                : "Derecho";
 
     broadcast({
         type: "RESUMEN",
