@@ -16,13 +16,18 @@ export default function GameScreen() {
             return;
         }
 
-        socket.onopen = () => {
-            const mensaje = {
-                type: "ENTRADA",
-                jugador: nombre
-            };
-            socket.send(JSON.stringify(mensaje));
+        const mensajeEntrada = {
+            type: "ENTRADA",
+            jugador: nombre
         };
+
+        if (socket.readyState === 1) {
+            socket.send(JSON.stringify(mensajeEntrada));
+        } else {
+            socket.onopen = () => {
+                socket.send(JSON.stringify(mensajeEntrada));
+            };
+        }
 
         socket.onmessage = (e) => {
             try {

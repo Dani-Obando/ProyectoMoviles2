@@ -1,54 +1,72 @@
+const express = require('express');
+const http = require('http');
 const WebSocket = require('ws');
+const cors = require('cors');
+const conectarDB = require('./db');
+const jugadasRoute = require('./routes/jugadas');
+const Jugada = require('./routes/jugadas');
 
-const server = new WebSocket.Server({ port: 5000 });
-const jugadores = [];
+
+
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+app.use(cors());
+app.use(express.json());
+app.use('/jugadas', jugadasRoute);
+
+conectarDB();
+
+let jugadores = [];
 let turnoActual = 0;
 
-console.log("🎯 Servidor WebSocket iniciado en puerto 5000");
-
-server.on('connection', (ws) => {
-    ws.id = Math.random().toString(36).substring(7);
+wss.on('connection', (ws) => {
+    ws.id = Math.random().toString(36).substring(2);
     jugadores.push(ws);
+    console.log(`🟢 Nuevo jugador conectado: ${ws.id}`);
 
-    console.log(`🟢 Jugador conectado: ${ws.id}`);
-
-    ws.on('message', (data) => {
+    ws.on('message', async (data) => {
         try {
             const msg = JSON.parse(data);
 
             if (msg.type === 'ENTRADA') {
                 ws.nombre = msg.jugador;
-                console.log(`👤 ${msg.jugador} ha entrado`);
-                broadcast({ type: "MENSAJE", contenido: `${msg.jugador} se unió al juego.` });
+                broadcast({
+                    type: 'MENSAJE',
+                    contenido: `${msg.jugador} se unió al juego.`,
+                });
                 enviarTurno();
             }
 
             if (msg.type === 'JUGADA') {
-                console.log(`🎲 ${msg.jugador} jugó ${msg.peso}g`);
+                const jugada = new Jugada({
+                    jugador: msg.jugador,
+                    turno: turnoActual + 1,
+                    peso: msg.peso,
+                    equipo: 0, // lógica futura
+                    eliminado: false,
+                });
+                await jugada.save();
 
                 broadcast({
-                    type: "MENSAJE",
-                    contenido: `${msg.jugador} colocó ${msg.peso}g`
+                    type: 'MENSAJE',
+                    contenido: `${msg.jugador} colocó ${msg.peso}g`,
                 });
 
                 turnoActual = (turnoActual + 1) % jugadores.length;
                 enviarTurno();
             }
-
         } catch (err) {
-            console.error("❌ Error procesando mensaje:", err);
+            console.error('❌ Error:', err.message);
         }
     });
 
     ws.on('close', () => {
         console.log(`🔴 Jugador desconectado: ${ws.id}`);
-        const index = jugadores.indexOf(ws);
-        if (index !== -1) {
-            jugadores.splice(index, 1);
-            if (jugadores.length === 0) turnoActual = 0;
-            else if (turnoActual >= jugadores.length) turnoActual = 0;
-            enviarTurno();
-        }
+        jugadores = jugadores.filter((j) => j !== ws);
+        if (turnoActual >= jugadores.length) turnoActual = 0;
+        enviarTurno();
     });
 });
 
@@ -56,19 +74,38 @@ function enviarTurno() {
     const jugadorActual = jugadores[turnoActual];
     const nombreActual = jugadorActual?.nombre || `Jugador ${turnoActual + 1}`;
 
-    jugadores.forEach((jugador, index) => {
-        jugador.send(JSON.stringify({
-            type: "TURNO",
-            tuTurno: index === turnoActual,
-            jugadorEnTurno: nombreActual
-        }));
-    });
-}
-
-function broadcast(data) {
-    jugadores.forEach(j => {
+    jugadores.forEach((j, i) => {
         if (j.readyState === WebSocket.OPEN) {
-            j.send(JSON.stringify(data));
+            try {
+                j.send(JSON.stringify({
+                    type: 'TURNO',
+                    tuTurno: i === turnoActual,
+                    jugadorEnTurno: nombreActual
+                }));
+            } catch (err) {
+                console.error("❌ Error al enviar turno:", err.message);
+            }
         }
     });
 }
+
+
+function broadcast(data) {
+    const mensaje = typeof data === 'string' ? data : JSON.stringify(data);
+
+    jugadores.forEach((j) => {
+        if (j.readyState === WebSocket.OPEN) {
+            try {
+                j.send(mensaje);
+            } catch (err) {
+                console.error("❌ Error al enviar broadcast:", err.message);
+            }
+        }
+    });
+}
+
+
+const PORT = 5000;
+server.listen(PORT, () => {
+    console.log(`🚀 Servidor listo en http://localhost:${PORT}`);
+});
