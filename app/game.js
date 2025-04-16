@@ -26,6 +26,7 @@ export default function GameScreen() {
     const [contador, setContador] = useState(60);
     const intervaloRef = useRef(null);
     const [dropAreas, setDropAreas] = useState({ izquierdo: null, derecho: null });
+    const [zonasListas, setZonasListas] = useState(false);
 
     useEffect(() => {
         const nuevos = [];
@@ -126,7 +127,7 @@ export default function GameScreen() {
         if (bloque.usado) return null;
 
         const panResponder = PanResponder.create({
-            onStartShouldSetPanResponder: () => miTurno && !eliminado,
+            onStartShouldSetPanResponder: () => miTurno && !eliminado && zonasListas,
             onPanResponderMove: Animated.event(
                 [null, { dx: bloque.pan.x, dy: bloque.pan.y }],
                 { useNativeDriver: false }
@@ -178,7 +179,8 @@ export default function GameScreen() {
             typeof area.y !== "number" ||
             typeof area.width !== "number" ||
             typeof area.height !== "number"
-        ) return false;
+        )
+            return false;
 
         const { moveX, moveY } = gesture;
         return (
@@ -238,22 +240,26 @@ export default function GameScreen() {
                     }}
                 >
                     <View
-                        onLayout={(e) =>
-                            setDropAreas((prev) => ({
-                                ...prev,
-                                izquierdo: e.nativeEvent.layout,
-                            }))
-                        }
+                        onLayout={(e) => {
+                            const layout = e.nativeEvent.layout;
+                            setDropAreas((prev) => {
+                                const updated = { ...prev, izquierdo: layout };
+                                if (updated.izquierdo && updated.derecho) setZonasListas(true);
+                                return updated;
+                            });
+                        }}
                     >
                         <Text>Izq: {pesoIzq}g</Text>
                     </View>
                     <View
-                        onLayout={(e) =>
-                            setDropAreas((prev) => ({
-                                ...prev,
-                                derecho: e.nativeEvent.layout,
-                            }))
-                        }
+                        onLayout={(e) => {
+                            const layout = e.nativeEvent.layout;
+                            setDropAreas((prev) => {
+                                const updated = { ...prev, derecho: layout };
+                                if (updated.izquierdo && updated.derecho) setZonasListas(true);
+                                return updated;
+                            });
+                        }}
                     >
                         <Text>Der: {pesoDer}g</Text>
                     </View>
