@@ -207,10 +207,10 @@ const styles = StyleSheet.create({
     },
     pesoTextoInclinado: {
         position: "absolute",
-        bottom: 111,
+        bottom: 11,
         fontSize: 12,
         fontWeight: "bold",
-        color: "white",
+        color: "black",
         paddingHorizontal: 5,
         borderRadius: 5,
         zIndex: 2,
