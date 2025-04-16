@@ -19,27 +19,21 @@ app.use("/adivinanzas", adivinanzasRoute);
 
 conectarDB();
 
-// ... [IMPORTS Y CONFIGURACIÓN INICIAL IGUAL] ...
-
 let jugadores = [];
 let turnoActual = 0;
 let pesoIzquierdo = 0;
 let pesoDerecho = 0;
-let ladoActual = "izquierdo";
 let totalJugadas = 0;
 let bloquesTotales = 0;
 let bloquesPorJugador = {};
-let jugadasIndividuales = {}; // ✅ para partidas individuales
 let turnoTimeout = null;
 
+const sesionesIndividuales = {};
 const COLORES = ["red", "blue", "green", "orange", "purple"];
 
 wss.on("connection", (ws) => {
     ws.id = Math.random().toString(36).substring(2);
     ws.eliminado = false;
-    ws.individual = false;
-    jugadores.push(ws);
-    console.log(`🟢 Nuevo jugador conectado: ${ws.id}`);
 
     ws.on("message", async (data) => {
         try {
@@ -47,81 +41,144 @@ wss.on("connection", (ws) => {
 
             if (msg.type === "ENTRADA") {
                 ws.nombre = msg.jugador;
-                ws.individual = msg.modo === "individual"; // ✅ detectar modo
+                ws.modo = msg.modo || "multijugador";
 
-                if (!bloquesPorJugador[msg.jugador]) {
-                    const bloques = [];
-                    COLORES.forEach((color) => {
-                        for (let i = 0; i < 2; i++) {
-                            const peso = Math.floor(Math.random() * 19) + 2;
-                            bloques.push({ color, peso });
-                            bloquesTotales++;
-                        }
+                if (ws.modo === "individual") {
+                    if (!sesionesIndividuales[ws.nombre]) {
+                        const bloques = [];
+                        COLORES.forEach((color) => {
+                            for (let i = 0; i < 2; i++) {
+                                const peso = Math.floor(Math.random() * 19) + 2;
+                                bloques.push({ color, peso });
+                            }
+                        });
+                        sesionesIndividuales[ws.nombre] = {
+                            pesoIzquierdo: 0,
+                            pesoDerecho: 0,
+                            bloques,
+                            jugadas: [],
+                            terminado: false,
+                        };
+                    }
+
+                    ws.send(JSON.stringify({
+                        type: "TURNO",
+                        tuTurno: true,
+                        jugadorEnTurno: ws.nombre,
+                    }));
+                } else {
+                    if (!bloquesPorJugador[msg.jugador]) {
+                        const bloques = [];
+                        COLORES.forEach((color) => {
+                            for (let i = 0; i < 2; i++) {
+                                const peso = Math.floor(Math.random() * 19) + 2;
+                                bloques.push({ color, peso });
+                                bloquesTotales++;
+                            }
+                        });
+                        bloquesPorJugador[msg.jugador] = bloques;
+                    }
+
+                    jugadores.push(ws);
+                    broadcast({
+                        type: "MENSAJE",
+                        contenido: `${msg.jugador} se unió al juego.`,
                     });
-                    bloquesPorJugador[msg.jugador] = bloques;
+
+                    enviarTurno();
                 }
-
-                if (ws.individual) {
-                    jugadasIndividuales[msg.jugador] = []; // ✅ nuevo registro individual
-                }
-
-                broadcast({
-                    type: "MENSAJE",
-                    contenido: `${msg.jugador} se unió al juego.`,
-                });
-
-                enviarTurno();
             }
 
             if (msg.type === "JUGADA") {
-                clearTimeout(turnoTimeout);
-                const jugadorActual = jugadores[turnoActual];
+                if (ws.modo === "individual") {
+                    const sesion = sesionesIndividuales[ws.nombre];
+                    if (!sesion || sesion.terminado) return;
 
-                const jugada = {
-                    jugador: msg.jugador,
-                    turno: totalJugadas + 1,
-                    peso: msg.peso,
-                    equipo: 0,
-                    eliminado: false,
-                    color: msg.color,
-                };
+                    sesion.jugadas.push({ ...msg });
+                    if (msg.lado === "izquierdo") sesion.pesoIzquierdo += msg.peso;
+                    else if (msg.lado === "derecho") sesion.pesoDerecho += msg.peso;
 
-                if (ws.individual) {
-                    jugadasIndividuales[msg.jugador].push(jugada);
-                } else {
-                    const jugadaMongo = new Jugada(jugada);
-                    await jugadaMongo.save();
-                }
+                    ws.send(JSON.stringify({
+                        type: "ACTUALIZAR_BALANZA",
+                        izquierdo: sesion.pesoIzquierdo,
+                        derecho: sesion.pesoDerecho,
+                        jugador: msg.jugador,
+                    }));
 
-                if (msg.lado === "izquierdo") {
-                    pesoIzquierdo += msg.peso;
-                } else if (msg.lado === "derecho") {
-                    pesoDerecho += msg.peso;
-                }
+                    ws.send(JSON.stringify({
+                        type: "MENSAJE",
+                        contenido: `${msg.jugador} colocó ${msg.peso}g en lado ${msg.lado}`,
+                    }));
 
+                    if (sesion.jugadas.length >= 10) {
+                        sesion.terminado = true;
 
-                broadcast({
-                    type: "ACTUALIZAR_BALANZA",
-                    izquierdo: pesoIzquierdo,
-                    derecho: pesoDerecho,
-                    jugador: msg.jugador,
-                });
+                        const resumen = {
+                            jugador: ws.nombre,
+                            totales: {
+                                izquierdo: sesion.pesoIzquierdo,
+                                derecho: sesion.pesoDerecho,
+                            },
+                            contenido: sesion.jugadas,
+                            sobrevivientes: [ws.nombre],
+                            ganador:
+                                sesion.pesoIzquierdo === sesion.pesoDerecho
+                                    ? "Empate"
+                                    : sesion.pesoIzquierdo < sesion.pesoDerecho
+                                        ? "Izquierdo"
+                                        : "Derecho",
+                            bloquesPorJugador: {
+                                [ws.nombre]: sesion.bloques,
+                            },
+                        };
 
-                broadcast({
-                    type: "MENSAJE",
-                    contenido: `${msg.jugador} colocó ${msg.peso}g`,
-                });
-
-                totalJugadas++;
-
-                if (totalJugadas >= bloquesTotales) {
-                    if (ws.individual) {
-                        enviarResumenIndividual(ws);
+                        ws.send(JSON.stringify({
+                            type: "RESUMEN",
+                            ...resumen,
+                        }));
                     } else {
-                        enviarResumenFinal();
+                        ws.send(JSON.stringify({
+                            type: "TURNO",
+                            tuTurno: true,
+                            jugadorEnTurno: ws.nombre,
+                        }));
                     }
+
                 } else {
-                    avanzarTurno();
+                    clearTimeout(turnoTimeout);
+                    const jugadorActual = jugadores[turnoActual];
+                    const jugada = new Jugada({
+                        jugador: msg.jugador,
+                        turno: totalJugadas + 1,
+                        peso: msg.peso,
+                        equipo: 0,
+                        eliminado: false,
+                        color: msg.color,
+                    });
+                    await jugada.save();
+
+                    if (msg.lado === "izquierdo") pesoIzquierdo += msg.peso;
+                    else pesoDerecho += msg.peso;
+
+                    broadcast({
+                        type: "ACTUALIZAR_BALANZA",
+                        izquierdo: pesoIzquierdo,
+                        derecho: pesoDerecho,
+                        jugador: msg.jugador,
+                    });
+
+                    broadcast({
+                        type: "MENSAJE",
+                        contenido: `${msg.jugador} colocó ${msg.peso}g en el lado ${msg.lado}`,
+                    });
+
+                    totalJugadas++;
+
+                    if (totalJugadas >= bloquesTotales) {
+                        enviarResumenFinal();
+                    } else {
+                        avanzarTurno();
+                    }
                 }
             }
         } catch (err) {
@@ -141,6 +198,7 @@ function avanzarTurno() {
     do {
         turnoActual = (turnoActual + 1) % jugadores.length;
     } while (jugadores[turnoActual]?.eliminado && jugadores.length > 1);
+
     enviarTurno();
 }
 
@@ -176,6 +234,7 @@ function enviarTurno() {
                 contenido: `${jugadores[turnoActual].nombre} fue eliminado por inactividad.`,
             });
         }
+
         avanzarTurno();
     }, 60000);
 }
@@ -225,36 +284,6 @@ async function enviarResumenFinal() {
         ganador: ladoGanador,
         bloquesPorJugador,
     });
-}
-
-function enviarResumenIndividual(ws) {
-    const jugadas = jugadasIndividuales[ws.nombre] || [];
-
-    const resumen = jugadas.map((j, i) => ({
-        jugador: j.jugador,
-        turno: j.turno,
-        peso: j.peso,
-        color: j.color,
-    }));
-
-    const ladoGanador =
-        pesoIzquierdo === pesoDerecho
-            ? "Empate"
-            : pesoIzquierdo < pesoDerecho
-                ? "Izquierdo"
-                : "Derecho";
-
-    ws.send(JSON.stringify({
-        type: "RESUMEN",
-        contenido: resumen,
-        totales: {
-            izquierdo: pesoIzquierdo,
-            derecho: pesoDerecho,
-        },
-        sobrevivientes: [ws.nombre],
-        ganador: ladoGanador,
-        bloquesPorJugador: { [ws.nombre]: bloquesPorJugador[ws.nombre] },
-    }));
 }
 
 const PORT = 5000;

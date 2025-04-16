@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useEffect, useState, useRef } from "react";
 import socket from "../sockets/connection";
+import BalanzaAnimada from "../components/BalanzaAnimada";
 
 const COLORES = ["red", "blue", "green", "orange", "purple"];
 
@@ -144,9 +145,13 @@ export default function GameScreen() {
         if (bloque.usado) return null;
 
         const panResponder = PanResponder.create({
-            onStartShouldSetPanResponder: () => miTurno && !eliminado,
+            onStartShouldSetPanResponder: () =>
+                miTurno &&
+                !eliminado &&
+                dropAreas.izquierdo !== null &&
+                dropAreas.derecho !== null,
             onPanResponderGrant: () => {
-                bloque.pan.extractOffset(); // <-- ✅ para que se mueva libremente sin offset raro
+                bloque.pan.extractOffset();
             },
             onPanResponderMove: Animated.event(
                 [null, { dx: bloque.pan.x, dy: bloque.pan.y }],
@@ -189,8 +194,6 @@ export default function GameScreen() {
         );
     };
 
-    const inclinacion = pesoIzq === pesoDer ? 0 : pesoIzq > pesoDer ? -10 : 10;
-
     if (modo === "multijugador" && esperando) {
         return (
             <View style={styles.centered}>
@@ -210,53 +213,44 @@ export default function GameScreen() {
                 {miTurno ? `⏱️ Tiempo: ${contador}s` : "⏳ Esperando turno..."}
             </Text>
 
-            <View style={{ alignItems: "center", marginTop: 20 }}>
-                <Text style={{ marginBottom: 10 }}>⚖️ Balanza</Text>
+            <BalanzaAnimada pesoIzq={pesoIzq} pesoDer={pesoDer} />
+
+            <View
+                style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    width: 200,
+                    marginTop: 10,
+                    alignSelf: "center",
+                }}
+            >
                 <View
-                    style={{
-                        width: 200,
-                        height: 20,
-                        backgroundColor: "#444",
-                        transform: [{ rotate: `${inclinacion}deg` }],
-                        borderRadius: 10,
-                    }}
-                />
-                <View
-                    style={{
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        width: 200,
-                        marginTop: 10,
+                    ref={refIzq}
+                    style={{ backgroundColor: "#ffe0e0", padding: 10, borderRadius: 5 }}
+                    onLayout={() => {
+                        refIzq.current?.measureInWindow((x, y, width, height) => {
+                            setDropAreas((prev) => ({
+                                ...prev,
+                                izquierdo: { x, y, width, height },
+                            }));
+                        });
                     }}
                 >
-                    <View
-                        ref={refIzq}
-                        style={{ backgroundColor: "#ffe0e0", padding: 10, borderRadius: 5 }}
-                        onLayout={() => {
-                            refIzq.current?.measureInWindow((x, y, width, height) => {
-                                setDropAreas((prev) => ({
-                                    ...prev,
-                                    izquierdo: { x, y, width, height },
-                                }));
-                            });
-                        }}
-                    >
-                        <Text>Izq: {pesoIzq}g</Text>
-                    </View>
-                    <View
-                        ref={refDer}
-                        style={{ backgroundColor: "#e0e0ff", padding: 10, borderRadius: 5 }}
-                        onLayout={() => {
-                            refDer.current?.measureInWindow((x, y, width, height) => {
-                                setDropAreas((prev) => ({
-                                    ...prev,
-                                    derecho: { x, y, width, height },
-                                }));
-                            });
-                        }}
-                    >
-                        <Text>Der: {pesoDer}g</Text>
-                    </View>
+                    <Text>Izq: {pesoIzq}g</Text>
+                </View>
+                <View
+                    ref={refDer}
+                    style={{ backgroundColor: "#e0e0ff", padding: 10, borderRadius: 5 }}
+                    onLayout={() => {
+                        refDer.current?.measureInWindow((x, y, width, height) => {
+                            setDropAreas((prev) => ({
+                                ...prev,
+                                derecho: { x, y, width, height },
+                            }));
+                        });
+                    }}
+                >
+                    <Text>Der: {pesoDer}g</Text>
                 </View>
             </View>
 
