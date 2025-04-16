@@ -3,14 +3,17 @@ import { useEffect, useState, useRef } from "react";
 import {
     View,
     Text,
+    ScrollView,
     StyleSheet,
     Alert,
     Animated,
     PanResponder,
+    Dimensions,
 } from "react-native";
 import socket from "../sockets/connection";
 
 const COLORES = ["red", "blue", "green", "orange", "purple"];
+const { width } = Dimensions.get("window");
 
 export default function GameScreen() {
     const { nombre, modo } = useLocalSearchParams();
@@ -20,6 +23,7 @@ export default function GameScreen() {
     const [jugadorEnTurno, setJugadorEnTurno] = useState("");
     const [pesoIzq, setPesoIzq] = useState(0);
     const [pesoDer, setPesoDer] = useState(0);
+    const [resumenFinal, setResumenFinal] = useState(null);
     const [eliminado, setEliminado] = useState(false);
     const [contador, setContador] = useState(60);
     const [jugadoresConectados, setJugadoresConectados] = useState(1);
@@ -30,27 +34,32 @@ export default function GameScreen() {
     const refDerecho = useRef(null);
     const intervaloRef = useRef(null);
 
-    // ✅ Inicializar bloques en posiciones visibles
     useEffect(() => {
         const nuevos = [];
-        const baseX = 20;
-        const baseY = 150;
+        const inicioX = 20;
+        const inicioY = 500;
+        let fila = 0;
+        let col = 0;
 
-        COLORES.forEach((color, i) => {
-            for (let j = 0; j < 2; j++) {
-                const x = baseX + j * 70 + i * 30;
-                const y = baseY + i * 70;
-
+        COLORES.forEach((color) => {
+            for (let i = 0; i < 2; i++) {
+                const posX = inicioX + col * 70;
+                const posY = inicioY + fila * 70;
                 nuevos.push({
-                    id: `${color}-${j}-${Math.random().toString(36).substring(7)}`,
+                    id: `${color}-${i}-${Math.random().toString(36).substring(7)}`,
                     color,
                     peso: Math.floor(Math.random() * 19) + 2,
                     usado: false,
-                    pan: new Animated.ValueXY({ x, y }),
+                    pan: new Animated.ValueXY({ x: posX, y: posY }),
+                    origen: { x: posX, y: posY },
                 });
+                col++;
+                if (col >= 5) {
+                    col = 0;
+                    fila++;
+                }
             }
         });
-
         setBloques(nuevos);
     }, []);
 
@@ -99,8 +108,20 @@ export default function GameScreen() {
                     setMiTurno(false);
                     Alert.alert("Has sido eliminado", data.mensaje);
                 }
+
+                if (data.type === "RESUMEN") {
+                    clearInterval(intervaloRef.current);
+                    setResumenFinal(data);
+                }
+
+                if (data.type === "ENTRADA" && modo === "multijugador") {
+                    setJugadoresConectados(data.totalJugadores || 1);
+                    if ((data.totalJugadores || 1) >= 10) {
+                        setEsperando(false);
+                    }
+                }
             } catch (err) {
-                console.error("❌ Error procesando mensaje:", err.message);
+                console.error("❌ Error al procesar mensaje:", err);
             }
         };
 
@@ -126,16 +147,6 @@ export default function GameScreen() {
         setMiTurno(false);
     };
 
-    const isInDropArea = (gesture, area) => {
-        if (!area) return false;
-        return (
-            gesture.moveX > area.x &&
-            gesture.moveX < area.x + area.width &&
-            gesture.moveY > area.y &&
-            gesture.moveY < area.y + area.height
-        );
-    };
-
     const renderBloque = (bloque) => {
         if (bloque.usado) return null;
 
@@ -158,11 +169,16 @@ export default function GameScreen() {
                 const inIzq = isInDropArea(gesture, dropAreas.izquierdo);
                 const inDer = isInDropArea(gesture, dropAreas.derecho);
 
-                if (inIzq) enviarJugada(bloque, "izquierdo");
-                else if (inDer) enviarJugada(bloque, "derecho");
-                else {
+                if (inIzq) {
+                    enviarJugada(bloque, "izquierdo");
+                } else if (inDer) {
+                    enviarJugada(bloque, "derecho");
+                } else {
                     Animated.spring(bloque.pan, {
-                        toValue: { x: 0, y: 0 },
+                        toValue: {
+                            x: bloque.origen.x,
+                            y: bloque.origen.y,
+                        },
                         useNativeDriver: false,
                     }).start();
                 }
@@ -177,13 +193,33 @@ export default function GameScreen() {
                     styles.bloque,
                     { backgroundColor: bloque.color },
                     bloque.pan.getLayout(),
-                    { position: "absolute" },
                 ]}
             />
         );
     };
 
+    const isInDropArea = (gesture, area) => {
+        if (!area) return false;
+        return (
+            gesture.moveX > area.x &&
+            gesture.moveX < area.x + area.width &&
+            gesture.moveY > area.y &&
+            gesture.moveY < area.y + area.height
+        );
+    };
+
     const inclinacion = pesoIzq === pesoDer ? 0 : pesoIzq > pesoDer ? -10 : 10;
+
+    if (modo === "multijugador" && esperando) {
+        return (
+            <View style={styles.centered}>
+                <Text style={styles.esperando}>
+                    Esperando a {10 - jugadoresConectados} jugador
+                    {10 - jugadoresConectados !== 1 ? "es" : ""} más...
+                </Text>
+            </View>
+        );
+    }
 
     return (
         <View style={{ flex: 1, padding: 20 }}>
@@ -243,18 +279,16 @@ export default function GameScreen() {
                 </View>
             </View>
 
-            <View style={styles.zonaBloques}>
+            <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}>
                 {bloques.map(renderBloque)}
             </View>
 
             <Text style={{ marginTop: 30, fontWeight: "bold" }}>📨 Mensajes:</Text>
-            <View style={{ maxHeight: 200 }}>
+            <ScrollView style={{ marginTop: 10, maxHeight: 200 }}>
                 {mensajes.map((msg, idx) => (
-                    <Text key={idx} style={{ marginBottom: 5 }}>
-                        {msg}
-                    </Text>
+                    <Text key={idx} style={{ marginBottom: 5 }}>{msg}</Text>
                 ))}
-            </View>
+            </ScrollView>
         </View>
     );
 }
@@ -266,14 +300,13 @@ const styles = StyleSheet.create({
         width: 60,
         height: 60,
         borderRadius: 8,
+        position: "absolute",
         elevation: 4,
         shadowColor: "#000",
         shadowOpacity: 0.3,
         shadowOffset: { width: 2, height: 2 },
         shadowRadius: 3,
     },
-    zonaBloques: {
-        flex: 1,
-        position: "relative", // ¡IMPORTANTE!
-    },
+    esperando: { fontSize: 18, textAlign: "center" },
+    centered: { flex: 1, justifyContent: "center", alignItems: "center" },
 });
